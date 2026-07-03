@@ -1,0 +1,48 @@
+<?php
+
+namespace App\Modules\Lending\Http\Resources;
+
+use Illuminate\Http\Request;
+use Illuminate\Http\Resources\Json\JsonResource;
+
+class LoanResource extends JsonResource
+{
+    public function toArray(Request $request): array
+    {
+        return [
+            'id'                => $this->id,
+            'reference'         => $this->reference,
+            'principal_minor'   => $this->principal_minor,
+            'outstanding_minor' => $this->outstanding_minor,
+            'status'            => $this->status?->value,
+            'status_label'      => $this->status?->label(),
+            'disbursed_channel' => $this->disbursed_channel,
+            'disbursed_phone'   => $this->disbursed_phone,
+            'disbursed_at'      => $this->disbursed_at?->toIso8601String(),
+            'written_off_at'    => $this->written_off_at?->toIso8601String(),
+            'written_off_reason' => $this->written_off_reason,
+            'created_at'        => $this->created_at?->toIso8601String(),
+            'membership'        => $this->whenLoaded('membership', fn () => [
+                'id'       => $this->membership->id,
+                'user'     => [
+                    'id'        => $this->membership->user?->id,
+                    'full_name' => $this->membership->user?->full_name,
+                    'phone'     => $this->membership->user?->phone,
+                ],
+                'campaign' => [
+                    'id'   => $this->membership->campaign?->id,
+                    'name' => $this->membership->campaign?->name,
+                ],
+            ]),
+            'repayments'        => $this->whenLoaded('repayments', fn () =>
+                $this->repayments->map(fn ($r) => [
+                    'id'           => $r->id,
+                    'amount_minor' => $r->amount_minor,
+                    'channel'      => $r->channel,
+                    'notes'        => $r->notes,
+                    'created_at'   => $r->created_at?->toIso8601String(),
+                ])
+            ),
+        ];
+    }
+}
