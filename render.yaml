@@ -7,17 +7,10 @@ databases:
 services:
   - type: web
     name: kafo-api
-    runtime: php
+    runtime: docker
     plan: free
+    dockerfilePath: ./Dockerfile
     healthCheckPath: /up
-
-    buildCommand: |
-      composer install --no-dev --optimize-autoloader --no-interaction
-      php artisan config:cache
-      php artisan route:cache
-      php artisan migrate --force
-
-    startCommand: php artisan serve --host=0.0.0.0 --port=$PORT
 
     envVars:
       - key: APP_NAME
@@ -25,7 +18,7 @@ services:
       - key: APP_ENV
         value: production
       - key: APP_DEBUG
-        value: false
+        value: "false"
       - key: APP_KEY
         sync: false
       - key: APP_URL
