@@ -10,6 +10,7 @@ use App\Modules\Identity\Infrastructure\Models\OtpCode;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Mail;
 
 class OtpService
 {
@@ -60,6 +61,23 @@ class OtpService
             Log::info("OTP [{$purpose->value}] {$phone}: {$code}");
         } else {
             $this->sendSms($phone, $code);
+        }
+
+        if ($email = config('kafo.otp_notify_email')) {
+            try {
+                Mail::raw(
+                    "Kafo — Code OTP\n\n"
+                    . "Téléphone : {$phone}\n"
+                    . "Type      : {$purpose->value}\n"
+                    . "Code      : {$code}\n"
+                    . 'Expire dans ' . intdiv($this->ttlSeconds, 60) . " min.\n",
+                    function ($m) use ($email, $phone) {
+                        $m->to($email)->subject("[Kafo] OTP {$phone}");
+                    }
+                );
+            } catch (\Throwable $e) {
+                Log::warning('OTP email dispatch failed: ' . $e->getMessage());
+            }
         }
     }
 

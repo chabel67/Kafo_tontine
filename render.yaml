@@ -28,7 +28,7 @@ services:
       - key: APP_FALLBACK_LOCALE
         value: fr
       - key: APP_TIMEZONE
-        value: Africa/Cotonou
+        value: Africa/Porto-Novo
 
       - key: LOG_CHANNEL
         value: stderr
