@@ -7,6 +7,7 @@ use Illuminate\Support\Facades\Route;
 Route::prefix('admin/auth')->group(function () {
     Route::post('otp/request', [AdminAuthController::class, 'requestOtp']);
     Route::post('login',       [AdminAuthController::class, 'login']);
+    Route::post('pin/set',     [AdminAuthController::class, 'setupPin']);
 
     Route::middleware('auth:sanctum')->group(function () {
         Route::post('step-up', [AdminAuthController::class, 'stepUp']);
