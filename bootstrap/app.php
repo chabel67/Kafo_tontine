@@ -25,7 +25,8 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->redirectGuestsTo(fn () => null);
 
         $middleware->alias([
-            'step_up' => \App\Modules\Identity\Http\Middleware\RequireStepUpToken::class,
+            'step_up'    => \App\Modules\Identity\Http\Middleware\RequireStepUpToken::class,
+            'permission' => \App\Modules\Identity\Http\Middleware\EnsurePermission::class,
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions) {

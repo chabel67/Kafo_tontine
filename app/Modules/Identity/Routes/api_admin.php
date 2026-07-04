@@ -17,12 +17,20 @@ Route::prefix('admin/auth')->group(function () {
 });
 
 Route::middleware('auth:sanctum')->prefix('admin')->group(function () {
-    Route::get('staff',                              [AdminUsersController::class, 'index']);
-    Route::post('staff',                             [AdminUsersController::class, 'create']);
-    Route::get('staff/roles',                        [AdminUsersController::class, 'roles']);
-    Route::get('staff/{user}',                       [AdminUsersController::class, 'show']);
-    Route::post('staff/{user}/assign-role',          [AdminUsersController::class, 'assignRole']);
-    Route::delete('staff/{user}/roles/{role}',       [AdminUsersController::class, 'removeRole']);
-    Route::post('staff/{user}/deactivate',           [AdminUsersController::class, 'deactivate']);
-    Route::post('staff/{user}/reactivate',           [AdminUsersController::class, 'reactivate']);
+    Route::get('staff',                              [AdminUsersController::class, 'index'])
+        ->middleware('permission:admin.users');
+    Route::post('staff',                             [AdminUsersController::class, 'create'])
+        ->middleware('permission:admin.users');
+    Route::get('staff/roles',                        [AdminUsersController::class, 'roles'])
+        ->middleware('permission:admin.users');
+    Route::get('staff/{user}',                       [AdminUsersController::class, 'show'])
+        ->middleware('permission:admin.users');
+    Route::post('staff/{user}/assign-role',          [AdminUsersController::class, 'assignRole'])
+        ->middleware('permission:admin.users');
+    Route::delete('staff/{user}/roles/{role}',       [AdminUsersController::class, 'removeRole'])
+        ->middleware('permission:admin.users');
+    Route::post('staff/{user}/deactivate',           [AdminUsersController::class, 'deactivate'])
+        ->middleware('permission:admin.users');
+    Route::post('staff/{user}/reactivate',           [AdminUsersController::class, 'reactivate'])
+        ->middleware('permission:admin.users');
 });
