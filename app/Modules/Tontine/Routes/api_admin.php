@@ -1,6 +1,7 @@
 <?php
 
 use App\Modules\Tontine\Http\Controllers\AdminCampaignController;
+use App\Modules\Tontine\Http\Controllers\AdminCampaignPayoutController;
 use App\Modules\Tontine\Http\Controllers\AdminMarketCalendarController;
 use App\Modules\Tontine\Http\Controllers\AdminMemberController;
 use App\Modules\Tontine\Http\Controllers\AdminMembershipController;
@@ -16,6 +17,21 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::patch('/{campaign}',           [AdminCampaignController::class, 'update']);
         Route::patch('/{campaign}/status',    [AdminCampaignController::class, 'transition']);
         Route::get('/{campaign}/preview',     [AdminCampaignController::class, 'installmentPreview']);
+
+        // Clôture campagne — génère les payouts (R-CAMP-08).
+        Route::get('/{campaign}/close/preview', [AdminCampaignPayoutController::class, 'preview']);
+        Route::post('/{campaign}/close',        [AdminCampaignPayoutController::class, 'close'])
+            ->middleware('step_up');
+    });
+
+    // Payouts de clôture
+    Route::prefix('admin/campaign-payouts')->group(function () {
+        Route::get('/',                    [AdminCampaignPayoutController::class, 'index']);
+        Route::get('/{payout}',            [AdminCampaignPayoutController::class, 'show']);
+        Route::post('/{payout}/settle',    [AdminCampaignPayoutController::class, 'settle'])
+            ->middleware('step_up');
+        Route::post('/{payout}/cancel',    [AdminCampaignPayoutController::class, 'cancel'])
+            ->middleware(['permission:loan.writeoff', 'step_up']);
     });
 
     // Calendriers de marché

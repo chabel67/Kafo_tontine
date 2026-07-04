@@ -29,16 +29,18 @@ class CampaignService
             throw new InvalidStatusTransitionException($campaign->status->value, $newStatus->value);
         }
 
+        // R-CAMP-08 : la clôture est déléguée à CampaignClosureService qui
+        // gère la génération des payouts + l'annulation des demandes pending.
+        // R-CAMP-09 : les avances actives sont compensées via payout, pas
+        // un blocage. Il n'y a plus de check "loans actifs bloquent la clôture".
         if ($newStatus === CampaignStatus::Closed) {
-            // R-CAMP-03 : block closure if active loans exist (placeholder — Lending module not built yet)
-            // $activeLoans = $campaign->loans()->whereIn('status', ['disbursed', 'overdue'])->count();
-            // if ($activeLoans > 0) throw new ActiveLoansBlockClosureException($activeLoans);
+            app(CampaignClosureService::class)->close($campaign, $actor, $reason);
+            return $campaign->fresh();
         }
 
         $timestamps = match ($newStatus) {
             CampaignStatus::Open   => ['opened_at'    => now()],
             CampaignStatus::Active => ['activated_at' => now()],
-            CampaignStatus::Closed => ['closed_at'    => now()],
             default                => [],
         };
 

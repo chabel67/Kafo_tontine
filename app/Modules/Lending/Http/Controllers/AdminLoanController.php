@@ -5,9 +5,13 @@ namespace App\Modules\Lending\Http\Controllers;
 use App\Modules\Audit\Application\AuditService;
 use App\Modules\Lending\Application\EligibilityService;
 use App\Modules\Lending\Application\LendingService;
+use App\Modules\Lending\Domain\Enums\LoanProductType;
+use App\Modules\Lending\Http\Requests\CreateLoanRequestRequest;
 use App\Modules\Lending\Http\Resources\LoanRequestResource;
 use App\Modules\Lending\Http\Resources\LoanResource;
+use App\Modules\Lending\Http\Resources\LoanRepaymentScheduleResource;
 use App\Modules\Lending\Infrastructure\Models\Loan;
+use App\Modules\Lending\Infrastructure\Models\LoanRepaymentSchedule;
 use App\Modules\Lending\Infrastructure\Models\LoanRequest;
 use App\Modules\Tontine\Infrastructure\Models\Membership;
 use App\Shared\ApiResponse;
@@ -27,9 +31,11 @@ class AdminLoanController extends Controller
 
     public function indexRequests(Request $request): JsonResponse
     {
-        $requests = LoanRequest::with(['membership.user', 'membership.campaign', 'decidedBy', 'countersignedBy'])
+        $requests = LoanRequest::with(['membership.user', 'membership.campaign', 'campaign', 'decidedBy', 'countersignedBy'])
             ->when($request->query('status'), fn ($q, $s) => $q->where('status', $s))
+            ->when($request->query('product_type'), fn ($q, $t) => $q->where('product_type', $t))
             ->when($request->query('membership_id'), fn ($q, $id) => $q->where('membership_id', $id))
+            ->when($request->query('campaign_id'), fn ($q, $id) => $q->where('campaign_id', $id))
             ->when($request->query('search'), fn ($q, $s) =>
                 $q->whereHas('membership.user', fn ($u) =>
                     $u->where('full_name', 'ilike', "%{$s}%")->orWhere('phone', 'ilike', "%{$s}%")
@@ -52,28 +58,36 @@ class AdminLoanController extends Controller
 
     public function showRequest(LoanRequest $loanRequest): JsonResponse
     {
-        $loanRequest->load(['membership.user', 'membership.campaign', 'decidedBy', 'countersignedBy', 'loan.repayments']);
+        $loanRequest->load(['membership.user', 'membership.campaign', 'campaign', 'decidedBy', 'countersignedBy', 'loan.repayments', 'loan.schedules']);
 
         return ApiResponse::success(new LoanRequestResource($loanRequest));
     }
 
-    public function createRequest(Request $request): JsonResponse
+    public function createRequest(CreateLoanRequestRequest $request): JsonResponse
     {
-        $data = $request->validate([
-            'membership_id' => ['required', 'uuid', 'exists:memberships,id'],
-            'amount_minor'  => ['required', 'integer', 'min:1'],
-            'purpose'       => ['nullable', 'string', 'max:500'],
-        ]);
+        $data = $request->validated();
 
-        $membership  = Membership::findOrFail($data['membership_id']);
+        $membership = isset($data['membership_id'])
+            ? Membership::findOrFail($data['membership_id'])
+            : null;
+
         $loanRequest = $this->service->createRequest(
-            $membership,
-            (int) $data['amount_minor'],
-            $data['purpose'] ?? null,
+            [
+                'membership'         => $membership,
+                'product_type'       => LoanProductType::from($data['product_type']),
+                'campaign_id'        => $data['campaign_id'] ?? null,
+                'amount_minor'       => (int) $data['amount_minor'],
+                'purpose'            => $data['purpose'] ?? null,
+                'interest_rate_bps'  => $data['interest_rate_bps'] ?? null,
+                'periodicity'        => $data['periodicity'] ?? null,
+                'installments_count' => $data['installments_count'] ?? null,
+                'first_due_date'     => $data['first_due_date'] ?? null,
+                'custom_due_dates'   => $data['custom_due_dates'] ?? null,
+            ],
             $request->user()->id,
         );
 
-        return ApiResponse::created(new LoanRequestResource($loanRequest->load(['membership.user', 'membership.campaign'])));
+        return ApiResponse::created(new LoanRequestResource($loanRequest->load(['membership.user', 'membership.campaign', 'campaign'])));
     }
 
     public function approve(Request $request, LoanRequest $loanRequest): JsonResponse
@@ -131,11 +145,11 @@ class AdminLoanController extends Controller
         return ApiResponse::created(new LoanResource($loan->load(['membership.user', 'membership.campaign'])));
     }
 
-    // ── Eligibility check ──────────────────────────────────────────────────
+    // ── Eligibility snapshot (informatif — jamais bloquant, R-LOAN-11) ─────
 
     public function checkEligibility(Membership $membership): JsonResponse
     {
-        $snapshot = $this->eligibility->check($membership);
+        $snapshot = $this->eligibility->snapshotFor($membership, LoanProductType::Advance);
         return ApiResponse::success($snapshot);
     }
 
@@ -143,9 +157,11 @@ class AdminLoanController extends Controller
 
     public function indexLoans(Request $request): JsonResponse
     {
-        $loans = Loan::with(['membership.user', 'membership.campaign'])
+        $loans = Loan::with(['membership.user', 'membership.campaign', 'campaign'])
             ->when($request->query('status'), fn ($q, $s) => $q->where('status', $s))
+            ->when($request->query('product_type'), fn ($q, $t) => $q->where('product_type', $t))
             ->when($request->query('membership_id'), fn ($q, $id) => $q->where('membership_id', $id))
+            ->when($request->query('campaign_id'), fn ($q, $id) => $q->where('campaign_id', $id))
             ->when($request->query('search'), fn ($q, $s) =>
                 $q->whereHas('membership.user', fn ($u) =>
                     $u->where('full_name', 'ilike', "%{$s}%")->orWhere('phone', 'ilike', "%{$s}%")
@@ -168,8 +184,36 @@ class AdminLoanController extends Controller
 
     public function showLoan(Loan $loan): JsonResponse
     {
-        $loan->load(['membership.user', 'membership.campaign', 'repayments', 'loanRequest']);
+        $loan->load(['membership.user', 'membership.campaign', 'campaign', 'repayments', 'loanRequest', 'schedules']);
         return ApiResponse::success(new LoanResource($loan));
+    }
+
+    public function schedule(Loan $loan): JsonResponse
+    {
+        return ApiResponse::success(
+            LoanRepaymentScheduleResource::collection($loan->schedules()->get()),
+        );
+    }
+
+    public function waiveScheduleItem(Request $request, Loan $loan, LoanRepaymentSchedule $item): JsonResponse
+    {
+        if ($item->loan_id !== $loan->id) {
+            return ApiResponse::error('mismatch', 'Item does not belong to loan', 400);
+        }
+        $data = $request->validate([
+            'reason' => ['required', 'string', 'min:10', 'max:500'],
+        ]);
+
+        $item->update([
+            'status'    => \App\Modules\Lending\Domain\Enums\RepaymentScheduleStatus::Waived->value,
+            'waived_by' => $request->user()->id,
+            'waived_at' => now(),
+        ]);
+
+        $this->audit->logFromRequest($request, 'loan.schedule.waive', 'loan_repayment_schedule', $item->id,
+            [], ['loan_id' => $loan->id, 'reason' => $data['reason']]);
+
+        return ApiResponse::success(new LoanRepaymentScheduleResource($item->fresh()));
     }
 
     public function recordRepayment(Request $request, Loan $loan): JsonResponse

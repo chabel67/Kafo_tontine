@@ -10,8 +10,11 @@ use App\Modules\Identity\Application\PinService;
 use App\Modules\Ledger\Application\LedgerService;
 use App\Modules\Lending\Application\EligibilityService;
 use App\Modules\Lending\Application\LendingService;
+use App\Modules\Lending\Application\RepaymentScheduleGeneratorService;
 use App\Modules\Notifications\Application\NotificationService;
 use App\Modules\Payments\Application\PaymentService;
+use App\Modules\Tontine\Application\CampaignClosureService;
+use App\Modules\Tontine\Application\CampaignPayoutService;
 use App\Modules\Tontine\Application\CampaignService;
 use App\Modules\Tontine\Application\InstallmentGeneratorService;
 use App\Modules\Tontine\Application\MembershipService;
@@ -46,9 +49,11 @@ class ModuleServiceProvider extends ServiceProvider
         $this->app->singleton(EligibilityService::class, fn ($app) => new EligibilityService(
             $app->make(LedgerService::class),
         ));
+        $this->app->singleton(RepaymentScheduleGeneratorService::class);
         $this->app->singleton(LendingService::class, fn ($app) => new LendingService(
             $app->make(EligibilityService::class),
             $app->make(LedgerService::class),
+            $app->make(RepaymentScheduleGeneratorService::class),
         ));
 
         // Notifications
@@ -59,6 +64,12 @@ class ModuleServiceProvider extends ServiceProvider
         $this->app->singleton(CampaignService::class);
         $this->app->singleton(MembershipService::class, fn ($app) => new MembershipService(
             $app->make(InstallmentGeneratorService::class),
+            $app->make(LedgerService::class),
+        ));
+        $this->app->singleton(CampaignClosureService::class, fn ($app) => new CampaignClosureService(
+            $app->make(LedgerService::class),
+        ));
+        $this->app->singleton(CampaignPayoutService::class, fn ($app) => new CampaignPayoutService(
             $app->make(LedgerService::class),
         ));
     }

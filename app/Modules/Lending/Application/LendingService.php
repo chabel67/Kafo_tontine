@@ -4,10 +4,10 @@ namespace App\Modules\Lending\Application;
 
 use App\Modules\Ledger\Application\LedgerService;
 use App\Modules\Ledger\Domain\Enums\AccountType;
+use App\Modules\Lending\Domain\Enums\LoanPeriodicity;
+use App\Modules\Lending\Domain\Enums\LoanProductType;
 use App\Modules\Lending\Domain\Enums\LoanRequestStatus;
 use App\Modules\Lending\Domain\Enums\LoanStatus;
-use App\Modules\Lending\Domain\Exceptions\LoanIneligibleException;
-use App\Modules\Lending\Domain\Exceptions\LoanRecheckFailedException;
 use App\Modules\Lending\Infrastructure\Models\Loan;
 use App\Modules\Lending\Infrastructure\Models\LoanRepayment;
 use App\Modules\Lending\Infrastructure\Models\LoanRequest;
@@ -21,31 +21,50 @@ class LendingService
     public function __construct(
         private readonly EligibilityService $eligibility,
         private readonly LedgerService $ledger,
+        private readonly RepaymentScheduleGeneratorService $scheduler,
     ) {}
 
-    public function createRequest(
-        Membership $membership,
-        int $amountMinor,
-        ?string $purpose,
-        string $createdById,
-    ): LoanRequest {
-        $snapshot = $this->eligibility->check($membership);
+    /**
+     * Crée une demande de prêt polymorphe.
+     *
+     * Payload attendu (validé côté FormRequest) :
+     * - `product_type` : `advance` | `standard`
+     * - `amount_minor`, `purpose`
+     * - Si `advance` : `membership` requis, `campaign_id` inféré de la membership
+     * - Si `standard` : `membership` requis (cible), `campaign_id` optionnel,
+     *   `periodicity`, `installments_count`, `first_due_date` requis
+     *   (ou `custom_due_dates` non vides si periodicity=custom),
+     *   `interest_rate_bps` optionnel
+     *
+     * R-LOAN-11 : aucune vérif dure d'éligibilité — snapshot informatif seulement.
+     */
+    public function createRequest(array $payload, string $createdById): LoanRequest
+    {
+        $productType = $payload['product_type'] instanceof LoanProductType
+            ? $payload['product_type']
+            : LoanProductType::from($payload['product_type']);
 
-        if (! $snapshot['eligible']) {
-            throw new LoanIneligibleException($snapshot['reasons']);
-        }
+        $membership = $payload['membership'] ?? null;
+        $campaignId = $productType === LoanProductType::Advance
+            ? ($membership?->campaign_id)
+            : ($payload['campaign_id'] ?? null);
 
-        if ($amountMinor > $snapshot['max_amount_minor']) {
-            throw new LoanIneligibleException(["Montant demandé ({$amountMinor}) dépasse le plafond ({$snapshot['max_amount_minor']})"]);
-        }
+        $snapshot = $this->eligibility->snapshotFor($membership, $productType);
 
         return LoanRequest::create([
-            'membership_id'         => $membership->id,
-            'amount_minor'          => $amountMinor,
-            'purpose'               => $purpose,
-            'status'                => LoanRequestStatus::Pending,
-            'eligibility_snapshot'  => $snapshot,
-            'created_by'            => $createdById,
+            'membership_id'        => $membership?->id,
+            'campaign_id'          => $campaignId,
+            'product_type'         => $productType,
+            'amount_minor'         => (int) $payload['amount_minor'],
+            'purpose'              => $payload['purpose'] ?? null,
+            'status'               => LoanRequestStatus::Pending,
+            'interest_rate_bps'    => $payload['interest_rate_bps'] ?? null,
+            'periodicity'          => $payload['periodicity'] ?? null,
+            'installments_count'   => $payload['installments_count'] ?? null,
+            'first_due_date'       => $payload['first_due_date'] ?? null,
+            'custom_due_dates'     => $payload['custom_due_dates'] ?? null,
+            'eligibility_snapshot' => $snapshot,
+            'created_by'           => $createdById,
         ]);
     }
 
@@ -119,34 +138,37 @@ class LendingService
             throw new \RuntimeException('La demande n\'est pas prête pour le décaissement.');
         }
 
-        // Re-check eligibility before disbursement (R-LOAN-04)
-        $membership = $request->membership()->with(['installments'])->firstOrFail();
-        $snapshot   = $this->eligibility->check($membership);
+        $membership = $request->membership_id
+            ? $request->membership()->with(['installments'])->firstOrFail()
+            : null;
 
-        if (! $snapshot['eligible']) {
-            $request->update(['status' => LoanRequestStatus::Rejected, 'rejected_reason' => 'recheck_failed: ' . implode('; ', $snapshot['reasons'])]);
-            throw new LoanRecheckFailedException($snapshot['reasons']);
-        }
+        // R-LOAN-11 : plus de blocage éligibilité. On (re)pose juste le
+        // snapshot informatif au moment du décaissement (audit).
+        $productType    = $request->product_type;
+        $freshSnapshot  = $this->eligibility->snapshotFor($membership, $productType);
+        $request->update(['eligibility_snapshot' => $freshSnapshot]);
 
-        if ($request->amount_minor > $snapshot['max_amount_minor']) {
-            $request->update(['status' => LoanRequestStatus::Rejected, 'rejected_reason' => 'recheck_failed: plafond dépassé']);
-            throw new LoanRecheckFailedException(['Le plafond a diminué depuis l\'approbation.']);
-        }
-
-        return DB::transaction(function () use ($request, $membership, $disbursedById, $channel, $phone) {
+        return DB::transaction(function () use ($request, $membership, $disbursedById, $channel, $phone, $productType) {
             $reference = $this->nextReference();
 
             $loan = Loan::create([
-                'reference'         => $reference,
-                'loan_request_id'   => $request->id,
-                'membership_id'     => $membership->id,
-                'principal_minor'   => $request->amount_minor,
-                'outstanding_minor' => $request->amount_minor,
-                'status'            => LoanStatus::Active,
-                'disbursed_channel' => $channel,
-                'disbursed_phone'   => $phone,
-                'disbursed_by'      => $disbursedById,
-                'disbursed_at'      => now(),
+                'reference'          => $reference,
+                'loan_request_id'    => $request->id,
+                'membership_id'      => $request->membership_id,
+                'product_type'       => $productType,
+                'campaign_id'        => $request->campaign_id,
+                'principal_minor'    => $request->amount_minor,
+                'outstanding_minor'  => $request->amount_minor,
+                'status'             => LoanStatus::Active,
+                'interest_rate_bps'  => $request->interest_rate_bps,
+                'periodicity'        => $request->periodicity,
+                'installments_count' => $request->installments_count,
+                'first_due_date'     => $request->first_due_date,
+                'custom_due_dates'   => $request->custom_due_dates,
+                'disbursed_channel'  => $channel,
+                'disbursed_phone'    => $phone,
+                'disbursed_by'       => $disbursedById,
+                'disbursed_at'       => now(),
             ]);
 
             $request->update([
@@ -160,8 +182,8 @@ class LendingService
             $this->ledger->openAccount(
                 key: $receivableKey,
                 type: AccountType::LoanReceivable,
-                ownerId: $membership->user_id,
-                description: "Avance {$reference} — {$membership->user?->full_name}",
+                ownerId: $membership?->user_id,
+                description: "{$productType->label()} {$reference}" . ($membership?->user?->full_name ? " — {$membership->user->full_name}" : ''),
             );
 
             $floatKey = $channel === 'cash' ? 'CASH_BOX' : "MOMO_FLOAT:{$channel}";
@@ -174,17 +196,21 @@ class LendingService
                     ['account' => $floatKey,       'type' => 'credit', 'amount' => $request->amount_minor],
                 ],
                 reference:   $txnRef,
-                description: "Décaissement avance {$reference}",
+                description: "Décaissement {$productType->label()} {$reference}",
                 createdById: $disbursedById,
-                metadata:    ['loan_id' => $loan->id],
+                metadata:    ['loan_id' => $loan->id, 'product_type' => $productType->value],
             );
 
-            // In dev: log the MoMo outbound transfer
+            // Prêt standard : génère l'échéancier de remboursement
+            if ($productType->requiresSchedule()) {
+                $this->scheduler->generate($loan->fresh());
+            }
+
             if ($channel !== 'cash') {
                 Log::info("MoMo OUTBOUND [{$channel}] {$loan->reference} → {$phone} : {$request->amount_minor} XOF");
             }
 
-            return $loan;
+            return $loan->fresh();
         });
     }
 
@@ -214,14 +240,39 @@ class LendingService
             $floatKey      = $channel === 'cash' ? 'CASH_BOX' : "MOMO_FLOAT:{$channel}";
             $this->ledger->openAccount(key: $floatKey, type: $channel === 'cash' ? AccountType::CashBox : AccountType::MomoFloat);
 
+            // Prêt standard avec intérêt : split principal/intérêt via le schedule.
+            // Prêt sans échéancier ou sans intérêt : legs simples DR float / CR receivable.
+            $legs = [['account' => $floatKey, 'type' => 'debit', 'amount' => $effective]];
+
+            if ($loan->product_type === LoanProductType::Standard && $loan->interest_total_minor > 0) {
+                $split = $this->scheduler->applyPayment($loan, $effective);
+                if ($split['interest'] > 0) {
+                    $this->ledger->openAccount(key: 'REVENUE_INTEREST', type: AccountType::RevenueInterest);
+                    $legs[] = ['account' => 'REVENUE_INTEREST', 'type' => 'credit', 'amount' => $split['interest']];
+                }
+                if ($split['principal'] > 0) {
+                    $legs[] = ['account' => $receivableKey, 'type' => 'credit', 'amount' => $split['principal']];
+                }
+                // Le split couvre exactement $effective (garanti par applyPayment
+                // qui n'affecte jamais plus que ce qu'il reçoit). Si un reliquat
+                // subsiste (paiement > total dû), on l'impute au principal receivable.
+                $matched = $split['principal'] + $split['interest'];
+                if ($matched < $effective) {
+                    $legs[] = ['account' => $receivableKey, 'type' => 'credit', 'amount' => $effective - $matched];
+                }
+            } else {
+                if ($loan->product_type === LoanProductType::Standard) {
+                    // Standard sans intérêt : on met à jour le schedule quand même
+                    $this->scheduler->applyPayment($loan, $effective);
+                }
+                $legs[] = ['account' => $receivableKey, 'type' => 'credit', 'amount' => $effective];
+            }
+
             $txnRef = $this->ledger->nextReference();
             $this->ledger->post(
-                legs: [
-                    ['account' => $floatKey,       'type' => 'debit',  'amount' => $effective],
-                    ['account' => $receivableKey,   'type' => 'credit', 'amount' => $effective],
-                ],
+                legs:        $legs,
                 reference:   $txnRef,
-                description: "Remboursement avance {$loan->reference}",
+                description: "Remboursement {$loan->product_type->label()} {$loan->reference}",
                 createdById: $recordedById,
                 metadata:    ['loan_id' => $loan->id, 'repayment_id' => $repayment->id],
             );

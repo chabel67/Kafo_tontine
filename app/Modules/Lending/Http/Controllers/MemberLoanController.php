@@ -3,7 +3,10 @@
 namespace App\Modules\Lending\Http\Controllers;
 
 use App\Modules\Lending\Application\EligibilityService;
+use App\Modules\Lending\Application\LendingService;
+use App\Modules\Lending\Domain\Enums\LoanProductType;
 use App\Modules\Lending\Domain\Enums\LoanRequestStatus;
+use App\Modules\Lending\Http\Resources\LoanRepaymentScheduleResource;
 use App\Modules\Lending\Infrastructure\Models\Loan;
 use App\Modules\Lending\Infrastructure\Models\LoanRequest;
 use App\Modules\Tontine\Domain\Enums\MembershipStatus;
@@ -15,7 +18,10 @@ use Illuminate\Routing\Controller;
 
 class MemberLoanController extends Controller
 {
-    public function __construct(private readonly EligibilityService $eligibility) {}
+    public function __construct(
+        private readonly EligibilityService $eligibility,
+        private readonly LendingService     $service,
+    ) {}
 
     public function eligibility(Request $request, string $membershipId): JsonResponse
     {
@@ -23,9 +29,15 @@ class MemberLoanController extends Controller
             ->where('user_id', $request->user()->id)
             ->firstOrFail();
 
-        return ApiResponse::success($this->eligibility->check($membership));
+        return ApiResponse::success(
+            $this->eligibility->snapshotFor($membership, LoanProductType::Advance),
+        );
     }
 
+    /**
+     * Demande d'avance côté membre. Le product_type est forcé à `advance`
+     * et l'éligibilité n'est plus bloquante (R-LOAN-11) — le staff décide.
+     */
     public function request(Request $request): JsonResponse
     {
         $data = $request->validate([
@@ -39,39 +51,34 @@ class MemberLoanController extends Controller
             ->where('status', MembershipStatus::Active)
             ->firstOrFail();
 
-        $snapshot = $this->eligibility->check($membership);
-
-        if (! $snapshot['eligible']) {
-            return ApiResponse::error(
-                'not_eligible',
-                implode('. ', $snapshot['reasons']),
-                422
-            );
-        }
-
-        if ($data['amount_minor'] > $snapshot['max_amount_minor']) {
-            return ApiResponse::error(
-                'amount_exceeds_limit',
-                "Le montant demandé dépasse votre plafond de {$snapshot['max_amount_minor']} FCFA.",
-                422
-            );
-        }
-
-        $loanRequest = LoanRequest::create([
-            'membership_id'       => $membership->id,
-            'amount_minor'        => $data['amount_minor'],
-            'purpose'             => $data['purpose'],
-            'status'              => LoanRequestStatus::Pending,
-            'eligibility_snapshot' => $snapshot,
-            'created_by'          => $request->user()->id,
-        ]);
+        $loanRequest = $this->service->createRequest(
+            [
+                'membership'    => $membership,
+                'product_type'  => LoanProductType::Advance,
+                'amount_minor'  => (int) $data['amount_minor'],
+                'purpose'       => $data['purpose'] ?? null,
+            ],
+            $request->user()->id,
+        );
 
         return ApiResponse::created([
             'id'           => $loanRequest->id,
             'status'       => $loanRequest->status->value,
             'amount_minor' => $loanRequest->amount_minor,
+            'product_type' => $loanRequest->product_type->value,
             'created_at'   => $loanRequest->created_at->toIso8601String(),
         ]);
+    }
+
+    public function loanSchedule(Request $request, string $loanId): JsonResponse
+    {
+        $loan = Loan::where('id', $loanId)
+            ->whereHas('membership', fn ($q) => $q->where('user_id', $request->user()->id))
+            ->firstOrFail();
+
+        return ApiResponse::success(
+            LoanRepaymentScheduleResource::collection($loan->schedules()->get()),
+        );
     }
 
     public function myLoans(Request $request): JsonResponse

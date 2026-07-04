@@ -11,10 +11,18 @@ class LoanRequestResource extends JsonResource
     {
         return [
             'id'                    => $this->id,
+            'product_type'          => $this->product_type?->value,
+            'product_type_label'    => $this->product_type?->label(),
+            'campaign_id'           => $this->campaign_id,
             'amount_minor'          => $this->amount_minor,
             'purpose'               => $this->purpose,
             'status'                => $this->status?->value,
             'status_label'          => $this->status?->label(),
+            'interest_rate_bps'     => $this->interest_rate_bps,
+            'periodicity'           => $this->periodicity?->value,
+            'installments_count'    => $this->installments_count,
+            'first_due_date'        => $this->first_due_date?->toDateString(),
+            'custom_due_dates'      => $this->custom_due_dates,
             'eligibility_snapshot'  => $this->eligibility_snapshot,
             'rejected_reason'       => $this->rejected_reason,
             'decided_at'            => $this->decided_at?->toIso8601String(),

@@ -34,6 +34,10 @@ Route::middleware('auth:sanctum')->group(function () {
             ->middleware('permission:loan.view');
         Route::get('/{loan}',              [AdminLoanController::class, 'showLoan'])
             ->middleware('permission:loan.view');
+        Route::get('/{loan}/schedule',     [AdminLoanController::class, 'schedule'])
+            ->middleware('permission:loan.view');
+        Route::post('/{loan}/schedule/{item}/waive', [AdminLoanController::class, 'waiveScheduleItem'])
+            ->middleware(['permission:loan.review', 'step_up']);
         Route::post('/{loan}/repay',       [AdminLoanController::class, 'recordRepayment'])
             ->middleware('permission:loan.review');
         // Write-off = super_admin uniquement (R-LOAN-07). Aucun rôle ci-dessus

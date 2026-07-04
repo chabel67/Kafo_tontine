@@ -3,6 +3,7 @@
 namespace App\Modules\Lending\Application;
 
 use App\Modules\Ledger\Application\LedgerService;
+use App\Modules\Lending\Domain\Enums\LoanProductType;
 use App\Modules\Lending\Infrastructure\Models\Loan;
 use App\Modules\Tontine\Domain\Enums\MembershipStatus;
 use App\Modules\Tontine\Infrastructure\Models\Installment;
@@ -20,8 +21,46 @@ class EligibilityService
     public function __construct(private readonly LedgerService $ledger) {}
 
     /**
-     * Returns a full eligibility snapshot for a membership.
-     * Never throws — callers should inspect `eligible` and `reasons`.
+     * Snapshot informatif — ne bloque JAMAIS l'octroi (R-LOAN-11).
+     * La décision reste discrétionnaire du staff.
+     *
+     * `eligible=true` toujours. Les autres clés (savings, trust, coefficient)
+     * restent posées à titre d'aide à la décision.
+     */
+    public function snapshotFor(?Membership $membership, LoanProductType $type): array
+    {
+        if ($membership === null) {
+            return [
+                'eligible'          => true,
+                'product_type'      => $type->value,
+                'reasons'           => [],
+                'trust_score'       => null,
+                'coefficient'       => null,
+                'savings_minor'     => 0,
+                'max_amount_minor'  => null,
+                'checked_at'        => now()->toIso8601String(),
+            ];
+        }
+
+        $trustScore  = $this->computeTrustScore($membership);
+        $coefficient = $this->scoreToCoefficient($trustScore);
+        $savings     = $this->ledger->balance("MEMBER_SAVINGS:{$membership->id}");
+
+        return [
+            'eligible'         => true,
+            'product_type'     => $type->value,
+            'reasons'          => [],
+            'trust_score'      => $trustScore,
+            'coefficient'      => $coefficient,
+            'savings_minor'    => $savings,
+            'max_amount_minor' => (int) floor($savings * $coefficient),
+            'checked_at'       => now()->toIso8601String(),
+        ];
+    }
+
+    /**
+     * @deprecated depuis R-LOAN-11 : les conditions dures ne sont plus
+     * appliquées côté runtime. Conservé pour reporting/futur.
      */
     public function check(Membership $membership): array
     {
