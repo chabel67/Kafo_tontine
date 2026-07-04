@@ -6,12 +6,14 @@ use App\Modules\Ledger\Application\LedgerService;
 use App\Modules\Ledger\Domain\Enums\AccountType;
 use App\Modules\Payments\Domain\Enums\PaymentChannel;
 use App\Modules\Payments\Domain\Enums\PaymentStatus;
+use App\Modules\Payments\Domain\Exceptions\DuplicateCashPaymentException;
 use App\Modules\Payments\Infrastructure\Models\InstallmentPayment;
 use App\Modules\Payments\Infrastructure\Models\Payment;
 use App\Modules\Tontine\Domain\Enums\InstallmentStatus;
 use App\Modules\Tontine\Domain\Enums\MembershipStatus;
 use App\Modules\Tontine\Infrastructure\Models\Installment;
 use App\Modules\Tontine\Infrastructure\Models\Membership;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
@@ -23,15 +25,35 @@ class PaymentService
     /**
      * Enregistre et confirme immédiatement un paiement cash.
      * Génère les écritures ledger et affecte les échéances.
+     *
+     * R-PAY-08 : lève DuplicateCashPaymentException (409) si un cash confirmé
+     * existe déjà aujourd'hui pour cette membership et que $force n'est pas
+     * activé. R-PAY-10 : les MoMo confirmés le même jour ne comptent pas.
      */
     public function recordCash(
         Membership $membership,
         int        $amountMinor,
         string     $cashierId,
         ?string    $notes = null,
+        bool       $force = false,
     ): Payment {
         if ($membership->status !== MembershipStatus::Active) {
             throw new \RuntimeException('La membership doit être active pour enregistrer un paiement.', 422);
+        }
+
+        if (! $force) {
+            $existing = Payment::where('membership_id', $membership->id)
+                ->where('channel', PaymentChannel::Cash->value)
+                ->where('status', PaymentStatus::Confirmed->value)
+                ->whereDate(
+                    'created_at',
+                    Carbon::today(config('app.timezone', 'Africa/Cotonou')),
+                )
+                ->orderByDesc('created_at')
+                ->first();
+            if ($existing) {
+                throw new DuplicateCashPaymentException($existing);
+            }
         }
 
         return DB::transaction(function () use ($membership, $amountMinor, $cashierId, $notes) {

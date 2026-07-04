@@ -2,6 +2,7 @@
 
 namespace App\Modules\Payments\Http\Controllers;
 
+use App\Modules\Audit\Application\AuditService;
 use App\Modules\Payments\Application\PaymentService;
 use App\Modules\Payments\Domain\Enums\PaymentChannel;
 use App\Modules\Payments\Http\Resources\PaymentResource;
@@ -15,7 +16,10 @@ use Illuminate\Validation\Rule;
 
 class AdminPaymentController extends Controller
 {
-    public function __construct(private readonly PaymentService $service) {}
+    public function __construct(
+        private readonly PaymentService $service,
+        private readonly AuditService   $audit,
+    ) {}
 
     public function index(Request $request): JsonResponse
     {
@@ -56,7 +60,10 @@ class AdminPaymentController extends Controller
             'membership_id' => ['required', 'uuid', 'exists:memberships,id'],
             'amount_minor'  => ['required', 'integer', 'min:1'],
             'notes'         => ['nullable', 'string', 'max:500'],
+            'force'         => ['nullable', 'boolean'],
         ]);
+
+        $force = (bool) ($data['force'] ?? false);
 
         $membership = Membership::findOrFail($data['membership_id']);
         $payment    = $this->service->recordCash(
@@ -64,7 +71,24 @@ class AdminPaymentController extends Controller
             (int) $data['amount_minor'],
             $request->user()->id,
             $data['notes'] ?? null,
+            $force,
         );
+
+        // R-PAY-09 : trace le bypass du guard de double encaissement.
+        if ($force) {
+            $this->audit->logFromRequest(
+                $request,
+                'payment.cash.duplicate_bypass',
+                'payment',
+                $payment->id,
+                [],
+                [
+                    'new_payment_id' => $payment->id,
+                    'membership_id'  => $payment->membership_id,
+                    'amount_minor'   => $payment->amount_minor,
+                ],
+            );
+        }
 
         return ApiResponse::created(new PaymentResource($payment->load(['membership.user', 'membership.campaign'])));
     }

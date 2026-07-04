@@ -1,6 +1,7 @@
 <?php
 
 use App\Modules\Identity\Domain\Exceptions\BusinessException;
+use App\Modules\Payments\Domain\Exceptions\DuplicateCashPaymentException;
 use App\Shared\ApiResponse;
 use Illuminate\Auth\AuthenticationException;
 use Illuminate\Foundation\Application;
@@ -30,6 +31,29 @@ return Application::configure(basePath: dirname(__DIR__))
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions) {
+        // Cas spécial : conserve les détails structurés du Payment existant
+        // pour que l'UI puisse afficher la modale de confirmation (R-PAY-08).
+        // Doit être enregistré AVANT le handler générique BusinessException.
+        $exceptions->render(function (DuplicateCashPaymentException $e, Request $request) {
+            if ($request->is('api/*')) {
+                $existing = $e->existing;
+                return ApiResponse::error(
+                    $e->getErrorCode(),
+                    $e->getMessage(),
+                    $e->getHttpStatus(),
+                    ['details' => [
+                        'existing_payment' => [
+                            'id'           => $existing->id,
+                            'reference'    => $existing->reference,
+                            'amount_minor' => $existing->amount_minor,
+                            'created_at'   => $existing->created_at?->toIso8601String(),
+                            'notes'        => $existing->notes,
+                        ],
+                    ]],
+                );
+            }
+        });
+
         $exceptions->render(function (BusinessException $e, Request $request) {
             if ($request->is('api/*')) {
                 return ApiResponse::error($e->getErrorCode(), $e->getMessage(), $e->getHttpStatus());
