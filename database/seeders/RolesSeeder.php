@@ -59,6 +59,7 @@ class RolesSeeder extends Seeder
                     'campaign.view', 'campaign.manage', 'campaign.create',
                     'market_calendar.manage',
                     'treasury.view', 'treasury.reconcile',
+                    'ledger.manual_entry',
                     'settings.edit', 'psp.manage',
                     'audit.view', 'admin.users', 'reporting.view',
                 ]),

@@ -2,8 +2,11 @@
 
 namespace App\Modules\Ledger\Http\Controllers;
 
+use App\Modules\Audit\Application\AuditService;
 use App\Modules\Ledger\Application\LedgerJournalService;
+use App\Modules\Ledger\Application\LedgerManualEntryService;
 use App\Modules\Ledger\Application\LedgerService;
+use App\Modules\Ledger\Domain\Enums\ManualEntryCategory;
 use App\Modules\Ledger\Infrastructure\Models\LedgerAccount;
 use App\Modules\Ledger\Infrastructure\Models\LedgerEntry;
 use App\Modules\Ledger\Infrastructure\Models\LedgerTransaction;
@@ -14,10 +17,14 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
 use Illuminate\Support\Carbon;
+use Illuminate\Validation\Rule;
 
 class AdminLedgerController extends Controller
 {
-    public function __construct(private readonly LedgerService $ledger) {}
+    public function __construct(
+        private readonly LedgerService $ledger,
+        private readonly AuditService  $audit,
+    ) {}
 
     /** GET /admin/ledger/accounts */
     public function accounts(Request $request): JsonResponse
@@ -132,6 +139,53 @@ class AdminLedgerController extends Controller
         return ApiResponse::created([
             'id'        => $reversal->id,
             'reference' => $reversal->reference,
+        ]);
+    }
+
+    /**
+     * POST /admin/ledger/entries
+     *
+     * Enregistre une opération manuelle staff — dépense opérationnelle
+     * ou recette diverse — sur la trésorerie (R-LEDGER-09/10/11).
+     */
+    public function createManualEntry(Request $request, LedgerManualEntryService $service): JsonResponse
+    {
+        $data = $request->validate([
+            'direction'    => ['required', 'string', Rule::in(['in', 'out'])],
+            'amount_minor' => ['required', 'integer', 'min:1'],
+            'channel'      => ['required', 'string', Rule::in(['cash', 'mtn', 'orange', 'moov', 'wave'])],
+            'category'     => ['required', 'string', Rule::in(array_map(fn ($c) => $c->value, ManualEntryCategory::cases()))],
+            'notes'        => ['nullable', 'string', 'max:500'],
+        ]);
+
+        $txn = $service->create(
+            direction:    $data['direction'],
+            amountMinor:  (int) $data['amount_minor'],
+            channel:      $data['channel'],
+            category:     ManualEntryCategory::from($data['category']),
+            notes:        $data['notes'] ?? null,
+            userId:       $request->user()->id,
+        );
+
+        $this->audit->logFromRequest(
+            $request,
+            'ledger.manual_entry.create',
+            'LedgerTransaction',
+            $txn->id,
+            [],
+            [
+                'reference'    => $txn->reference,
+                'direction'    => $data['direction'],
+                'amount_minor' => (int) $data['amount_minor'],
+                'channel'      => $data['channel'],
+                'category'     => $data['category'],
+                'notes'        => $data['notes'] ?? null,
+            ],
+        );
+
+        return ApiResponse::created([
+            'id'        => $txn->id,
+            'reference' => $txn->reference,
         ]);
     }
 

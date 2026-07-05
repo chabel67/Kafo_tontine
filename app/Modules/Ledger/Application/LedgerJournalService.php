@@ -329,6 +329,12 @@ class LedgerJournalService
         } elseif (str_starts_with($d, 'Write-off')) {
             $type = 'writeoff';
             $label = 'Passage en perte (write-off)';
+        } elseif (str_starts_with($d, 'Dépense opérationnelle')) {
+            $type = 'manual_expense';
+            $label = $d;
+        } elseif (str_starts_with($d, 'Recette diverse')) {
+            $type = 'manual_income';
+            $label = $d;
         }
 
         if ($isReversal) {
