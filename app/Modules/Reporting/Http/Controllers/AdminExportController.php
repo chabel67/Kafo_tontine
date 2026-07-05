@@ -3,11 +3,13 @@
 namespace App\Modules\Reporting\Http\Controllers;
 
 use App\Modules\Identity\Infrastructure\Models\User;
+use App\Modules\Ledger\Application\LedgerJournalService;
 use App\Modules\Ledger\Application\LedgerService;
 use App\Modules\Ledger\Infrastructure\Models\LedgerEntry;
 use App\Modules\Lending\Infrastructure\Models\Loan;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
+use Illuminate\Support\Carbon;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class AdminExportController extends Controller
@@ -124,6 +126,66 @@ class AdminExportController extends Controller
                         ], ';');
                     }
                 });
+
+            fclose($handle);
+        }, $filename, [
+            'Content-Type'        => 'text/csv; charset=UTF-8',
+            'Content-Disposition' => "attachment; filename=\"{$filename}\"",
+        ]);
+    }
+
+    /**
+     * GET /admin/exports/journal
+     *
+     * Export CSV du journal des opérations — vue chronologique cross-compte
+     * du point de vue trésorerie (R-LEDGER-06).
+     */
+    public function journal(Request $request, LedgerJournalService $journal): StreamedResponse
+    {
+        $tz   = config('app.timezone', 'Africa/Cotonou');
+        $from = $request->query('from') ? Carbon::parse($request->query('from'), $tz) : null;
+        $to   = $request->query('to')   ? Carbon::parse($request->query('to'),   $tz) : null;
+        $channel = $request->query('channel');
+        $operationType = $request->query('operation_type');
+
+        $result = $journal->forPeriod(
+            from:          $from,
+            to:            $to,
+            channel:       $channel ?: null,
+            operationType: $operationType ?: null,
+            perPage:       PHP_INT_MAX,
+            page:          1,
+        );
+
+        $summary = $result['summary'];
+        $dateFrom = Carbon::parse($summary['period_from'])->format('Y-m-d');
+        $dateTo   = Carbon::parse($summary['period_to'])->format('Y-m-d');
+        $filename = "journal-operations-{$dateFrom}-au-{$dateTo}.csv";
+
+        return response()->streamDownload(function () use ($result) {
+            $handle = fopen('php://output', 'w');
+            fprintf($handle, chr(0xEF) . chr(0xBB) . chr(0xBF)); // BOM UTF-8
+
+            fputcsv($handle, [
+                'Date', 'Heure', 'Référence', 'Opération', 'Compte',
+                'Entrée (XOF)', 'Sortie (XOF)',
+                'Solde compte (XOF)', 'Solde global (XOF)',
+            ], ';');
+
+            foreach ($result['data'] as $row) {
+                $dt = Carbon::parse($row['created_at'])->timezone(config('app.timezone', 'Africa/Cotonou'));
+                fputcsv($handle, [
+                    $dt->format('Y-m-d'),
+                    $dt->format('H:i:s'),
+                    $row['reference'],
+                    $row['operation_label'],
+                    $row['account_label'] ?? '—',
+                    $row['in_minor']  ?: '',
+                    $row['out_minor'] ?: '',
+                    $row['account_balance_after_minor'] ?? '',
+                    $row['treasury_balance_after_minor'],
+                ], ';');
+            }
 
             fclose($handle);
         }, $filename, [

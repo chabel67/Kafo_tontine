@@ -7,6 +7,7 @@ use App\Modules\Identity\Application\AuthorizationService;
 use App\Modules\Identity\Application\AuthService;
 use App\Modules\Identity\Application\OtpService;
 use App\Modules\Identity\Application\PinService;
+use App\Modules\Ledger\Application\LedgerJournalService;
 use App\Modules\Ledger\Application\LedgerService;
 use App\Modules\Lending\Application\EligibilityService;
 use App\Modules\Lending\Application\LendingService;
@@ -39,6 +40,9 @@ class ModuleServiceProvider extends ServiceProvider
 
         // Ledger
         $this->app->singleton(LedgerService::class);
+        $this->app->singleton(LedgerJournalService::class, fn ($app) => new LedgerJournalService(
+            $app->make(LedgerService::class),
+        ));
 
         // Payments
         $this->app->singleton(PaymentService::class, fn ($app) => new PaymentService(

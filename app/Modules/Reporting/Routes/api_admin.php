@@ -17,4 +17,5 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/admin/exports/ledger',   [AdminExportController::class, 'ledger']);
     Route::get('/admin/exports/members',  [AdminExportController::class, 'members']);
     Route::get('/admin/exports/loans',    [AdminExportController::class, 'loans']);
+    Route::get('/admin/exports/journal',  [AdminExportController::class, 'journal']);
 });

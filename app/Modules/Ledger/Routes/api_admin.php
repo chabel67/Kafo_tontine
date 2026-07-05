@@ -9,6 +9,9 @@ Route::middleware('auth:sanctum')->prefix('admin/ledger')->group(function () {
     Route::get('/accounts/{key}/entries',            [AdminLedgerController::class, 'entries'])
         ->where('key', '.+')
         ->middleware('permission:treasury.view');
+    // Journal des opérations — vue chronologique cross-compte (R-LEDGER-06)
+    Route::get('/journal',                           [AdminLedgerController::class, 'journal'])
+        ->middleware('permission:treasury.view');
     Route::get('/transactions/{id}',                 [AdminLedgerController::class, 'transaction'])
         ->middleware('permission:treasury.view');
     // Contre-passation = super_admin uniquement (R-LEDGER-01).

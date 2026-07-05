@@ -2,6 +2,7 @@
 
 namespace App\Modules\Ledger\Http\Controllers;
 
+use App\Modules\Ledger\Application\LedgerJournalService;
 use App\Modules\Ledger\Application\LedgerService;
 use App\Modules\Ledger\Infrastructure\Models\LedgerAccount;
 use App\Modules\Ledger\Infrastructure\Models\LedgerEntry;
@@ -12,6 +13,7 @@ use App\Shared\ApiResponse;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
+use Illuminate\Support\Carbon;
 
 class AdminLedgerController extends Controller
 {
@@ -131,5 +133,44 @@ class AdminLedgerController extends Controller
             'id'        => $reversal->id,
             'reference' => $reversal->reference,
         ]);
+    }
+
+    /**
+     * GET /admin/ledger/journal
+     *
+     * Journal des opérations — vue chronologique cross-compte.
+     * Colonnes du point de vue trésorerie (R-LEDGER-06/07/08).
+     */
+    public function journal(Request $request, LedgerJournalService $journal): JsonResponse
+    {
+        $data = $request->validate([
+            'from'           => ['nullable', 'date'],
+            'to'             => ['nullable', 'date', 'after_or_equal:from'],
+            'search'         => ['nullable', 'string', 'max:100'],
+            'channel'        => ['nullable', 'string', 'in:cash,mtn,orange,moov,wave'],
+            'operation_type' => ['nullable', 'string', 'max:40'],
+            'page'           => ['nullable', 'integer', 'min:1'],
+            'per_page'       => ['nullable', 'integer', 'min:1', 'max:100'],
+        ]);
+
+        $tz   = config('app.timezone', 'Africa/Cotonou');
+        $from = isset($data['from']) ? Carbon::parse($data['from'], $tz) : null;
+        $to   = isset($data['to'])   ? Carbon::parse($data['to'],   $tz) : null;
+
+        $result = $journal->forPeriod(
+            from:          $from,
+            to:            $to,
+            search:        $data['search'] ?? null,
+            channel:       $data['channel'] ?? null,
+            operationType: $data['operation_type'] ?? null,
+            perPage:       (int) ($data['per_page'] ?? 25),
+            page:          (int) ($data['page'] ?? 1),
+        );
+
+        return ApiResponse::success(
+            $result['data'],
+            200,
+            $result['meta'] + ['summary' => $result['summary']],
+        );
     }
 }
