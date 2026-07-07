@@ -35,4 +35,15 @@ return [
         ],
     ],
 
+    'kkiapay' => [
+        'public_key'      => env('KKIAPAY_PUBLIC_KEY'),
+        'private_key'     => env('KKIAPAY_PRIVATE_KEY'),
+        'secret'          => env('KKIAPAY_SECRET'),
+        'webhook_secret'  => env('KKIAPAY_WEBHOOK_SECRET'),
+        'sandbox'         => (bool) env('KKIAPAY_SANDBOX', true),
+        'api_url'         => env('KKIAPAY_API_URL', 'https://api.kkiapay.me'),
+        'sandbox_api_url' => env('KKIAPAY_SANDBOX_API_URL', 'https://api-sandbox.kkiapay.me'),
+        'timeout'         => (int) env('KKIAPAY_TIMEOUT', 15),
+    ],
+
 ];

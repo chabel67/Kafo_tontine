@@ -2,6 +2,7 @@
 
 namespace App\Modules\Payments\Http\Controllers;
 
+use App\Modules\Payments\Domain\Contracts\PspDriver;
 use App\Modules\Payments\Domain\Enums\PaymentChannel;
 use App\Modules\Payments\Domain\Enums\PaymentStatus;
 use App\Modules\Payments\Infrastructure\Models\Payment;
@@ -11,12 +12,13 @@ use App\Shared\ApiResponse;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rules\Enum;
 
 class MemberPaymentController extends Controller
 {
+    public function __construct(private readonly PspDriver $psp) {}
+
     public function initiate(Request $request): JsonResponse
     {
         $data = $request->validate([
@@ -34,10 +36,9 @@ class MemberPaymentController extends Controller
 
         $idempotencyKey = $data['idempotency_key'] ?? Str::uuid()->toString();
 
-        // Return existing payment if same idempotency key
         $existing = Payment::where('idempotency_key', $idempotencyKey)->first();
         if ($existing) {
-            return ApiResponse::success($this->formatPayment($existing));
+            return ApiResponse::success($this->formatWithCheckout($existing));
         }
 
         $year      = now()->year;
@@ -55,10 +56,7 @@ class MemberPaymentController extends Controller
             'created_by'      => $request->user()->id,
         ]);
 
-        // In production: trigger MoMo push ussd here via PSP driver
-        // For now: payment stays pending until webhook confirms it
-
-        return ApiResponse::created($this->formatPayment($payment));
+        return ApiResponse::created($this->formatWithCheckout($payment));
     }
 
     public function transactions(Request $request): JsonResponse
@@ -88,6 +86,17 @@ class MemberPaymentController extends Controller
             'current_page' => $payments->currentPage(),
             'last_page'    => $payments->lastPage(),
         ]);
+    }
+
+    private function formatWithCheckout(Payment $p): array
+    {
+        $out = $this->formatPayment($p);
+
+        if ($p->channel->isMomo() && $p->status === PaymentStatus::Pending) {
+            $out['checkout'] = $this->psp->prepareCheckout($p)->toArray();
+        }
+
+        return $out;
     }
 
     private function formatPayment(Payment $p): array

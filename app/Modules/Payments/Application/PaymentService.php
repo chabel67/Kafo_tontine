@@ -163,6 +163,7 @@ class PaymentService
         string $idempotencyKey,
         string $pspReference,
         string $channel,
+        ?array $metadata = null,
     ): Payment {
         $payment = Payment::where('idempotency_key', $idempotencyKey)->firstOrFail();
 
@@ -170,11 +171,12 @@ class PaymentService
             return $payment; // idempotent
         }
 
-        return DB::transaction(function () use ($payment, $pspReference, $channel) {
+        return DB::transaction(function () use ($payment, $pspReference, $channel, $metadata) {
             $payment->update([
                 'status'        => PaymentStatus::Confirmed->value,
                 'psp_reference' => $pspReference,
                 'confirmed_at'  => now(),
+                'metadata'      => array_merge((array) $payment->metadata, $metadata ?? []),
             ]);
 
             $membership = $payment->membership()->with(['campaign'])->first();
@@ -183,6 +185,36 @@ class PaymentService
 
             return $payment->fresh();
         });
+    }
+
+    /**
+     * Marque un paiement comme échoué depuis un webhook PSP.
+     * Idempotent : si déjà failed/cancelled, retourne le paiement sans erreur.
+     * Aucune écriture ledger — un paiement échoué ne crédite rien.
+     */
+    public function markFailedFromWebhook(
+        string  $idempotencyKey,
+        string  $pspReference,
+        ?string $failureCode = null,
+        ?string $failureMessage = null,
+    ): Payment {
+        $payment = Payment::where('idempotency_key', $idempotencyKey)->firstOrFail();
+
+        if (in_array($payment->status, [PaymentStatus::Failed, PaymentStatus::Cancelled], true)) {
+            return $payment;
+        }
+
+        $payment->update([
+            'status'        => PaymentStatus::Failed->value,
+            'psp_reference' => $pspReference,
+            'failed_at'     => now(),
+            'metadata'      => array_merge((array) $payment->metadata, array_filter([
+                'failure_code'    => $failureCode,
+                'failure_message' => $failureMessage,
+            ])),
+        ]);
+
+        return $payment->fresh();
     }
 
     // -----------------------------------------------------------------------

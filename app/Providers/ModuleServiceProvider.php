@@ -15,6 +15,8 @@ use App\Modules\Lending\Application\LendingService;
 use App\Modules\Lending\Application\RepaymentScheduleGeneratorService;
 use App\Modules\Notifications\Application\NotificationService;
 use App\Modules\Payments\Application\PaymentService;
+use App\Modules\Payments\Domain\Contracts\PspDriver;
+use App\Modules\Payments\Infrastructure\Psp\KkiapayDriver;
 use App\Modules\Tontine\Application\CampaignClosureService;
 use App\Modules\Tontine\Application\CampaignPayoutService;
 use App\Modules\Tontine\Application\CampaignService;
@@ -51,6 +53,9 @@ class ModuleServiceProvider extends ServiceProvider
         // Payments
         $this->app->singleton(PaymentService::class, fn ($app) => new PaymentService(
             $app->make(LedgerService::class),
+        ));
+        $this->app->singleton(PspDriver::class, fn ($app) => new KkiapayDriver(
+            $app['config']->get('services.kkiapay', []),
         ));
 
         // Lending

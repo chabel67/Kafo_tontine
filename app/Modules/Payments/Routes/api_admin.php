@@ -4,8 +4,9 @@ use App\Modules\Payments\Http\Controllers\AdminPaymentController;
 use App\Modules\Payments\Http\Controllers\WebhookController;
 use Illuminate\Support\Facades\Route;
 
-// Webhooks PSP (sans auth — signature PSP à valider en prod)
+// Webhooks PSP (sans auth — signature vérifiée dans le handler)
 Route::post('/webhooks/psp/{channel}', [WebhookController::class, 'handle']);
+Route::post('/webhooks/kkiapay',       [WebhookController::class, 'handleKkiapay']);
 
 Route::middleware('auth:sanctum')->group(function () {
     Route::prefix('admin/payments')->group(function () {
