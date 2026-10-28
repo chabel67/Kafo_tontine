@@ -14,10 +14,13 @@ class User extends Authenticatable
 {
     use HasApiTokens, HasUuids, SoftDeletes;
 
+    /** Rôles du personnel : un utilisateur qui en porte un n'est pas listé comme membre. */
+    public const STAFF_ROLES = ['treasurer', 'manager', 'admin', 'super_admin'];
+
     protected $table = 'users';
 
     protected $fillable = [
-        'phone', 'full_name', 'pin_hash', 'kyc_level',
+        'phone', 'email', 'full_name', 'birth_date', 'locality', 'pin_hash', 'kyc_level',
         'kyc_status', 'status', 'kyc_documents', 'metadata',
     ];
 
@@ -25,6 +28,7 @@ class User extends Authenticatable
 
     protected $casts = [
         'kyc_level'     => 'integer',
+        'birth_date'    => 'date',
         'kyc_status'    => KycStatus::class,
         'status'        => UserStatus::class,
         'kyc_documents' => 'array',

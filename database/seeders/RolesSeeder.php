@@ -15,6 +15,7 @@ class RolesSeeder extends Seeder
                 'label'       => 'Membre',
                 'permissions' => json_encode([
                     'member.view_own', 'payment.view_own', 'loan.request',
+                    'withdrawal.request',
                 ]),
             ],
             [
@@ -27,6 +28,7 @@ class RolesSeeder extends Seeder
                     'cash.validate',
                     'loan.view',
                     'treasury.view',
+                    'withdrawal.view', 'withdrawal.review',
                 ]),
             ],
             [
@@ -42,6 +44,7 @@ class RolesSeeder extends Seeder
                     'loan.view', 'loan.review', 'loan.reject',
                     'campaign.view', 'campaign.manage',
                     'treasury.view', 'treasury.reconcile',
+                    'withdrawal.view', 'withdrawal.request', 'withdrawal.review',
                 ]),
             ],
             [
@@ -62,6 +65,8 @@ class RolesSeeder extends Seeder
                     'ledger.manual_entry',
                     'settings.edit', 'psp.manage',
                     'audit.view', 'admin.users', 'reporting.view',
+                    'withdrawal.view', 'withdrawal.request', 'withdrawal.review',
+                    'withdrawal.disburse',
                 ]),
             ],
             [

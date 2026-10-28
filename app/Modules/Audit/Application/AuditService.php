@@ -31,6 +31,24 @@ class AuditService
         ]);
     }
 
+    /**
+     * Historique paginé d'un ensemble d'entités (vue par entité, EF-AUDIT-03).
+     *
+     * @param  array<string, string[]>  $entities  ['user' => [id], 'membership' => [id, …]]
+     */
+    public function forEntities(array $entities, int $perPage = 15): \Illuminate\Contracts\Pagination\LengthAwarePaginator
+    {
+        return AuditLog::query()
+            ->where(function ($q) use ($entities) {
+                foreach ($entities as $type => $ids) {
+                    if (empty($ids)) continue;
+                    $q->orWhere(fn ($w) => $w->where('entity_type', $type)->whereIn('entity_id', $ids));
+                }
+            })
+            ->orderByDesc('created_at')
+            ->paginate($perPage);
+    }
+
     public function logFromRequest(
         Request $request,
         string  $action,

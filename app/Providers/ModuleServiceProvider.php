@@ -95,6 +95,7 @@ class ModuleServiceProvider extends ServiceProvider
             base_path('app/Modules/Tontine/Routes/api.php'),
             base_path('app/Modules/Payments/Routes/api.php'),
             base_path('app/Modules/Lending/Routes/api.php'),
+            base_path('app/Modules/Notifications/Routes/api.php'),
             // Admin (back-office) routes
             base_path('app/Modules/Identity/Routes/api_admin.php'),
             base_path('app/Modules/Tontine/Routes/api_admin.php'),

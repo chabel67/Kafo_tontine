@@ -2,6 +2,7 @@
 
 use App\Modules\Tontine\Http\Controllers\AdminCampaignController;
 use App\Modules\Tontine\Http\Controllers\AdminCampaignPayoutController;
+use App\Modules\Tontine\Http\Controllers\AdminEarlyWithdrawalController;
 use App\Modules\Tontine\Http\Controllers\AdminMarketCalendarController;
 use App\Modules\Tontine\Http\Controllers\AdminMemberController;
 use App\Modules\Tontine\Http\Controllers\AdminMembershipController;
@@ -54,15 +55,59 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/{membership}/installments',      [AdminMembershipController::class, 'installments']);
     });
 
-    // Membres (utilisateurs)
+    // Membres (utilisateurs) — lecture : member.view ; gestion : member.manage ; pièces KYC : member.kyc
     Route::prefix('admin/members')->group(function () {
-        Route::get('/',                                            [AdminMemberController::class, 'index']);
-        Route::post('/',                                           [AdminMemberController::class, 'store']);
-        Route::get('/{user}',                                      [AdminMemberController::class, 'show']);
-        Route::get('/{user}/kyc',                                  [AdminMemberController::class, 'kycDocuments']);
-        Route::get('/{user}/kyc/document/{level}/{type}',          [AdminMemberController::class, 'kycServeDocument'])
-            ->name('admin.kyc.document');
-        Route::post('/{user}/kyc/approve',                         [AdminMemberController::class, 'approveKyc']);
-        Route::post('/{user}/kyc/reject',                          [AdminMemberController::class, 'rejectKyc']);
+        Route::middleware('permission:member.view')->group(function () {
+            Route::get('/',                        [AdminMemberController::class, 'index']);
+            Route::get('/{user}',                  [AdminMemberController::class, 'show']);
+            Route::get('/{user}/overview',         [AdminMemberController::class, 'overview']);
+            Route::get('/{user}/transactions',     [AdminMemberController::class, 'transactions']);
+            Route::get('/{user}/finance',          [AdminMemberController::class, 'finance']);
+            Route::get('/{user}/history',          [AdminMemberController::class, 'history']);
+            Route::get('/{user}/notes',            [AdminMemberController::class, 'notes']);
+        });
+
+        Route::middleware('permission:member.manage')->group(function () {
+            Route::post('/',                       [AdminMemberController::class, 'store']);
+            Route::patch('/{user}',                [AdminMemberController::class, 'update']);
+            Route::post('/{user}/suspend',         [AdminMemberController::class, 'suspend']);
+            Route::post('/{user}/activate',        [AdminMemberController::class, 'activate']);
+            Route::post('/{user}/reactivate',      [AdminMemberController::class, 'reactivate']);
+            Route::post('/{user}/notes',           [AdminMemberController::class, 'addNote']);
+        });
+
+        Route::middleware('permission:member.kyc')->group(function () {
+            Route::get('/{user}/kyc',                         [AdminMemberController::class, 'kycDocuments']);
+            Route::get('/{user}/kyc/document/{level}/{type}', [AdminMemberController::class, 'kycServeDocument'])
+                ->name('admin.kyc.document');
+            Route::post('/{user}/kyc/approve',                [AdminMemberController::class, 'approveKyc']);
+            Route::post('/{user}/kyc/reject',                 [AdminMemberController::class, 'rejectKyc']);
+        });
     });
+
+    // Retraits anticipés (R-WDR-*)
+    Route::prefix('admin/early-withdrawals')->group(function () {
+        Route::get('/',       [AdminEarlyWithdrawalController::class, 'index'])->middleware('permission:withdrawal.view');
+        Route::get('/stats',  [AdminEarlyWithdrawalController::class, 'stats'])->middleware('permission:withdrawal.view');
+        Route::post('/',      [AdminEarlyWithdrawalController::class, 'store'])->middleware('permission:withdrawal.request');
+        Route::get('/{withdrawal}', [AdminEarlyWithdrawalController::class, 'show'])->middleware('permission:withdrawal.view');
+
+        // Instruction
+        Route::middleware('permission:withdrawal.review')->group(function () {
+            Route::post('/{withdrawal}/review',       [AdminEarlyWithdrawalController::class, 'review']);
+            Route::post('/{withdrawal}/request-info', [AdminEarlyWithdrawalController::class, 'requestInfo']);
+            Route::post('/{withdrawal}/approve',      [AdminEarlyWithdrawalController::class, 'approve']);
+            Route::post('/{withdrawal}/reject',       [AdminEarlyWithdrawalController::class, 'reject']);
+            Route::post('/{withdrawal}/cancel',       [AdminEarlyWithdrawalController::class, 'cancel']);
+        });
+
+        // Versement (manuel) : lancement sous step-up, puis confirmation ou échec
+        Route::middleware('permission:withdrawal.disburse')->group(function () {
+            Route::post('/{withdrawal}/payout/initiate', [AdminEarlyWithdrawalController::class, 'initiatePayout'])->middleware('step_up');
+            Route::post('/{withdrawal}/payout/confirm',  [AdminEarlyWithdrawalController::class, 'confirmPayout']);
+            Route::post('/{withdrawal}/payout/fail',     [AdminEarlyWithdrawalController::class, 'failPayout']);
+        });
+    });
+    Route::get('admin/memberships/{membership}/withdrawable', [AdminEarlyWithdrawalController::class, 'withdrawable'])
+        ->middleware('permission:withdrawal.view,withdrawal.request');
 });

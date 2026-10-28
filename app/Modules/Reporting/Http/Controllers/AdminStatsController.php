@@ -6,6 +6,8 @@ use App\Modules\Ledger\Application\LedgerService;
 use App\Modules\Lending\Infrastructure\Models\Loan;
 use App\Modules\Lending\Infrastructure\Models\LoanRequest;
 use App\Modules\Payments\Infrastructure\Models\Payment;
+use App\Modules\Tontine\Domain\Enums\EarlyWithdrawalStatus;
+use App\Modules\Tontine\Infrastructure\Models\EarlyWithdrawal;
 use App\Modules\Tontine\Infrastructure\Models\Installment;
 use App\Modules\Tontine\Infrastructure\Models\Membership;
 use App\Shared\ApiResponse;
@@ -116,7 +118,22 @@ class AdminStatsController extends Controller
                 'created_at' => $r->created_at?->toIso8601String(),
             ]);
 
-        $items = collect($pendingMemberships)->concat($pendingLoans)
+        $pendingWithdrawals = EarlyWithdrawal::with(['user', 'membership.campaign'])
+            ->whereIn('status', EarlyWithdrawalStatus::committed())
+            ->orderBy('created_at')
+            ->limit(10)
+            ->get()
+            ->map(fn ($w) => [
+                'type'       => 'early_withdrawal',
+                'id'         => $w->id,
+                'label'      => $w->user?->full_name ?? '—',
+                'sub'        => number_format($w->amount_minor) . ' XOF — ' . ($w->membership?->campaign?->name ?? '—'),
+                'status'     => $w->status->label(),
+                'action_url' => "/withdrawals/{$w->id}",
+                'created_at' => $w->created_at?->toIso8601String(),
+            ]);
+
+        $items = collect($pendingMemberships)->concat($pendingLoans)->concat($pendingWithdrawals)
             ->sortBy('created_at')
             ->values();
 
@@ -271,5 +288,86 @@ class AdminStatsController extends Controller
             ]);
 
         return ApiResponse::success($payments);
+    }
+
+    /**
+     * Tendances du tableau de bord : série journalière des encaissements (cash vs MoMo),
+     * variations mois en cours vs même période du mois précédent, répartition par canal.
+     * Les journées sont calculées dans le fuseau de l'application (les timestamps sont stockés en UTC).
+     */
+    public function trends(Request $request): JsonResponse
+    {
+        $tz   = config('app.timezone', 'UTC');
+        $days = (int) $request->query('days', 7) === 30 ? 30 : 7;
+        $now  = now($tz);
+
+        // Série journalière
+        $seriesFrom = $now->copy()->subDays($days - 1)->startOfDay();
+        $localDate  = "DATE((confirmed_at AT TIME ZONE 'UTC') AT TIME ZONE '{$tz}')";
+
+        $rows = Payment::where('status', 'confirmed')
+            ->where('confirmed_at', '>=', $seriesFrom->copy()->utc())
+            ->selectRaw("{$localDate} as date,
+                SUM(CASE WHEN channel = 'cash' THEN amount_minor ELSE 0 END) as cash,
+                SUM(CASE WHEN channel <> 'cash' THEN amount_minor ELSE 0 END) as momo")
+            ->groupByRaw($localDate)
+            ->get()
+            ->keyBy(fn ($r) => (string) $r->date);
+
+        $series = [];
+        for ($d = $seriesFrom->copy(); $d->lte($now); $d->addDay()) {
+            $row  = $rows->get($d->toDateString());
+            $cash = (int) ($row->cash ?? 0);
+            $momo = (int) ($row->momo ?? 0);
+            $series[] = ['date' => $d->toDateString(), 'cash' => $cash, 'momo' => $momo, 'total' => $cash + $momo];
+        }
+
+        // Mois en cours (jusqu'à maintenant) vs même durée du mois précédent
+        $curFrom  = $now->copy()->startOfMonth();
+        $prevFrom = $curFrom->copy()->subMonthNoOverflow();
+        $prevTo   = $prevFrom->copy()->addSeconds($curFrom->diffInSeconds($now));
+
+        $period = fn (string $model, string $column, string $agg) => function ($from, $to) use ($model, $column, $agg) {
+            $q = $model::query()->whereBetween($column, [$from->copy()->utc(), $to->copy()->utc()]);
+            if ($model === Payment::class) $q->where('status', 'confirmed');
+            return (int) ($agg === 'count' ? $q->count() : $q->sum($agg));
+        };
+
+        $metrics = [
+            'encaissements'      => $period(Payment::class,    'confirmed_at', 'amount_minor'),
+            'nouveaux_membres'   => $period(Membership::class, 'activated_at', 'count'),
+            'avances_decaissees' => $period(Loan::class,       'disbursed_at', 'principal_minor'),
+        ];
+
+        $deltas = [];
+        foreach ($metrics as $key => $fn) {
+            $current  = $fn($curFrom, $now);
+            $previous = $fn($prevFrom, $prevTo);
+            $deltas[$key] = [
+                'current'  => $current,
+                'previous' => $previous,
+                'pct'      => $previous > 0 ? round(($current - $previous) / $previous * 100, 1) : null,
+            ];
+        }
+
+        // Répartition des encaissements du mois par canal
+        $channels = Payment::where('status', 'confirmed')
+            ->where('confirmed_at', '>=', $curFrom->copy()->utc())
+            ->selectRaw('channel, SUM(amount_minor) as total')
+            ->groupBy('channel')
+            ->orderByDesc('total')
+            ->get()
+            ->map(fn ($r) => [
+                'channel' => $r->channel instanceof \BackedEnum ? $r->channel->value : (string) $r->channel,
+                'total'   => (int) $r->total,
+            ])
+            ->values();
+
+        return ApiResponse::success([
+            'days'     => $days,
+            'series'   => $series,
+            'deltas'   => $deltas,
+            'channels' => $channels,
+        ]);
     }
 }

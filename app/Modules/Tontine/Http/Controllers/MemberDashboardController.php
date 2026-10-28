@@ -5,6 +5,7 @@ namespace App\Modules\Tontine\Http\Controllers;
 use App\Modules\Lending\Domain\Enums\LoanStatus;
 use App\Modules\Lending\Infrastructure\Models\Loan;
 use App\Modules\Payments\Infrastructure\Models\Payment;
+use App\Modules\Tontine\Application\TrustScoreService;
 use App\Modules\Tontine\Domain\Enums\InstallmentStatus;
 use App\Modules\Tontine\Domain\Enums\MembershipStatus;
 use App\Modules\Tontine\Infrastructure\Models\Installment;
@@ -147,25 +148,6 @@ class MemberDashboardController extends Controller
 
     private function computeGlobalTrustScore(array $membershipIds): int
     {
-        if (empty($membershipIds)) {
-            return 80;
-        }
-
-        $totalDue = Installment::whereIn('membership_id', $membershipIds)
-            ->where('due_date', '<=', now())
-            ->count();
-
-        if ($totalDue === 0) {
-            return 80;
-        }
-
-        $everLate    = Installment::whereIn('membership_id', $membershipIds)
-            ->whereNotNull('late_marked_at')
-            ->count();
-        $currentLate = Installment::whereIn('membership_id', $membershipIds)
-            ->where('status', InstallmentStatus::Late)
-            ->count();
-
-        return max(0, min(100, 80 - ($everLate * 10) - ($currentLate * 20)));
+        return app(TrustScoreService::class)->forMemberships($membershipIds);
     }
 }

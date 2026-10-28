@@ -4,6 +4,7 @@ namespace App\Modules\Identity\Application;
 
 use App\Modules\Identity\Domain\Enums\OtpPurpose;
 use App\Modules\Identity\Domain\Enums\UserStatus;
+use App\Modules\Identity\Domain\Exceptions\AccountNotActivatedException;
 use App\Modules\Identity\Domain\Exceptions\UnauthorizedException;
 use App\Modules\Identity\Infrastructure\Models\AccessLog;
 use App\Modules\Identity\Infrastructure\Models\AuthSession;
@@ -80,6 +81,14 @@ class AuthService
     ): array {
         $user = User::where('phone', $phone)->first();
 
+        // Compte pas encore activé par le staff : message explicite, mais seulement
+        // après vérification de l'OTP (ne révèle rien sans possession du téléphone).
+        if ($user && $user->status === UserStatus::Pending) {
+            $this->otpService->verify($phone, $otp, OtpPurpose::Login);
+            AccessLog::record($user->id, 'login_failed_not_activated', $ip, $userAgent);
+            throw new AccountNotActivatedException();
+        }
+
         if (! $user || $user->status !== UserStatus::Active) {
             AccessLog::record(null, 'login_failed_user_not_found', $ip, $userAgent, ['phone' => $phone]);
             throw new UnauthorizedException();
@@ -115,6 +124,12 @@ class AuthService
         ?string $userAgent,
     ): array {
         $user = User::where('phone', $phone)->first();
+
+        if ($user && $user->status === UserStatus::Pending) {
+            $this->otpService->verify($phone, $otp, OtpPurpose::Signup);
+            AccessLog::record($user->id, 'pin_setup_failed_not_activated', $ip, $userAgent);
+            throw new AccountNotActivatedException();
+        }
 
         if (! $user || $user->status !== UserStatus::Active) {
             AccessLog::record(null, 'pin_setup_failed', $ip, $userAgent, ['phone' => $phone]);

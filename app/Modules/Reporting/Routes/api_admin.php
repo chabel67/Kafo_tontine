@@ -12,6 +12,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/admin/stats/reconciliation',        [AdminStatsController::class, 'reconciliation']);
     Route::get('/admin/stats/members-by-campaign',     [AdminStatsController::class, 'membersByCampaign']);
     Route::get('/admin/stats/collections-by-campaign', [AdminStatsController::class, 'collectionsByCampaign']);
+    Route::get('/admin/stats/trends',                  [AdminStatsController::class, 'trends']);
 
     // CSV exports
     Route::get('/admin/exports/ledger',   [AdminExportController::class, 'ledger']);

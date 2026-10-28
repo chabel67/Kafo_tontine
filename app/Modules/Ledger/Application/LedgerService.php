@@ -105,6 +105,39 @@ class LedgerService
     }
 
     /**
+     * Balances of several accounts in one grouped query (same sign convention as balance()).
+     * Unknown keys are returned with a 0 balance.
+     *
+     * @param  string[]  $accountKeys
+     * @return array<string, int>
+     */
+    public function balances(array $accountKeys): array
+    {
+        $result = array_fill_keys($accountKeys, 0);
+        if (empty($accountKeys)) {
+            return $result;
+        }
+
+        $types = LedgerAccount::whereIn('key', $accountKeys)->pluck('type', 'key');
+
+        $sums = LedgerEntry::whereIn('account_key', $accountKeys)
+            ->selectRaw("account_key,
+                SUM(CASE WHEN entry_type = 'credit' THEN amount_minor ELSE 0 END) as credits,
+                SUM(CASE WHEN entry_type = 'debit'  THEN amount_minor ELSE 0 END) as debits")
+            ->groupBy('account_key')
+            ->get();
+
+        foreach ($sums as $row) {
+            $type = $types[$row->account_key] ?? null;
+            $result[$row->account_key] = $type?->isAsset()
+                ? (int) ($row->debits - $row->credits)
+                : (int) ($row->credits - $row->debits);
+        }
+
+        return $result;
+    }
+
+    /**
      * Generates the next unique transaction reference (TXN-YYYY-NNNNNN).
      */
     public function nextReference(): string
