@@ -49,6 +49,11 @@ class AuditService
             ->paginate($perPage);
     }
 
+    /**
+     * @param  object|null  $actor  Auteur explicite (modèle User) quand la requête n'est pas
+     *                              encore authentifiée — ex. connexion staff : sans lui,
+     *                              `user_id` / `user_name` resteraient vides.
+     */
     public function logFromRequest(
         Request $request,
         string  $action,
@@ -56,8 +61,9 @@ class AuditService
         ?string $entityId   = null,
         array   $oldValues  = [],
         array   $newValues  = [],
+        ?object $actor      = null,
     ): AuditLog {
-        $user = $request->user();
+        $user = $actor ?? $request->user();
 
         return $this->log(
             action:     $action,

@@ -20,7 +20,7 @@ class LoanRequest extends Model
     protected $table = 'loan_requests';
 
     protected $fillable = [
-        'membership_id', 'amount_minor', 'purpose', 'status',
+        'idempotency_key', 'membership_id', 'user_id', 'amount_minor', 'purpose', 'status',
         'product_type', 'campaign_id',
         'interest_rate_bps', 'periodicity', 'installments_count',
         'first_due_date', 'custom_due_dates',
@@ -45,6 +45,21 @@ class LoanRequest extends Model
         'countersigned_at'      => 'datetime',
         'disbursed_at'          => 'datetime',
     ];
+
+    public function user(): BelongsTo
+    {
+        return $this->belongsTo(User::class);
+    }
+
+    /** L'emprunteur est toujours renseigné : déduit de l'adhésion quand il n'est pas fourni (R-LOAN-16). */
+    protected static function booted(): void
+    {
+        static::creating(function (self $model) {
+            if (! $model->user_id && $model->membership_id) {
+                $model->user_id = Membership::whereKey($model->membership_id)->value('user_id');
+            }
+        });
+    }
 
     public function membership(): BelongsTo
     {

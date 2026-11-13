@@ -2,6 +2,7 @@
 
 namespace App\Modules\Tontine\Http\Controllers;
 
+use App\Shared\BusinessTime;
 use App\Modules\Audit\Application\AuditService;
 use App\Modules\Identity\Domain\Enums\KycStatus;
 use App\Modules\Identity\Domain\Enums\UserStatus;
@@ -83,9 +84,9 @@ class AdminMemberController extends Controller
         $base = User::query()
             ->whereDoesntHave('roles', fn ($q) => $q->whereIn('name', User::STAFF_ROLES))
             ->select('users.*')
-            ->selectSub($installmentCount(fn ($q) => $q->whereDate('installments.due_date', '<=', today())
+            ->selectSub($installmentCount(fn ($q) => $q->whereDate('installments.due_date', '<=', BusinessTime::todayDate())
                 ->where('installments.status', '!=', InstallmentStatus::Waived->value)), 'due_count')
-            ->selectSub($installmentCount(fn ($q) => $q->whereDate('installments.due_date', '<=', today())
+            ->selectSub($installmentCount(fn ($q) => $q->whereDate('installments.due_date', '<=', BusinessTime::todayDate())
                 ->where('installments.status', InstallmentStatus::Paid->value)), 'paid_due_count')
             ->selectSub($installmentCount(fn ($q) => $q->whereNotNull('installments.late_marked_at')), 'ever_late_count')
             ->selectSub($installmentCount(fn ($q) => $q->where('installments.status', InstallmentStatus::Late->value)), 'late_count')
@@ -320,7 +321,7 @@ class AdminMemberController extends Controller
         $membershipIds = Membership::where('user_id', $user->id)->pluck('id');
 
         $loanRequests = LoanRequest::with(['campaign:id,name', 'membership.campaign:id,name', 'decidedBy:id,full_name', 'loan'])
-            ->whereIn('membership_id', $membershipIds)
+            ->where('user_id', $user->id)   // R-LOAN-16 : y compris prêts communautaires sans adhésion
             ->orderByDesc('created_at')
             ->get();
 
@@ -472,6 +473,18 @@ class AdminMemberController extends Controller
         $data = $request->validate([
             'level' => ['required', 'integer', 'in:1,2'],
         ]);
+
+        // R-KYC-01 : le niveau 2 (selfie + justificatif) se valide sur un niveau 1 acquis
+        // et sur les pièces effectivement envoyées.
+        if ((int) $data['level'] === 2) {
+            if ($user->kyc_level < 1) {
+                return ApiResponse::error('kyc_level_required', 'Le niveau 1 doit être vérifié avant d\'approuver le niveau 2.', 422);
+            }
+            $level2 = ($user->kyc_documents ?? [])['level2'] ?? [];
+            if (empty($level2['selfie_path']) || empty($level2['proof_path'])) {
+                return ApiResponse::error('kyc_documents_missing', 'Le selfie et le justificatif de domicile n\'ont pas été envoyés par le membre.', 422);
+            }
+        }
 
         $old = ['kyc_status' => $user->kyc_status, 'kyc_level' => $user->kyc_level];
         $user->update([

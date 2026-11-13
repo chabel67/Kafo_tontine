@@ -11,6 +11,8 @@ use App\Modules\Tontine\Infrastructure\Models\EarlyWithdrawal;
 use App\Modules\Tontine\Infrastructure\Models\Installment;
 use App\Modules\Tontine\Infrastructure\Models\Membership;
 use App\Shared\ApiResponse;
+use App\Shared\BusinessTime;
+use App\Shared\Money;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
@@ -22,7 +24,8 @@ class AdminStatsController extends Controller
 
     public function dashboard(Request $request): JsonResponse
     {
-        $today = now()->startOfDay();
+        // Jour local métier (R : stats « du jour » en fuseau Bénin), borne passée en UTC.
+        [$today] = BusinessTime::dayBoundsUtc();
 
         // Encaissements du jour (tous canaux confondus, paiements confirmés)
         $todayPayments = Payment::where('status', 'confirmed')
@@ -94,16 +97,21 @@ class AdminStatsController extends Controller
             ->limit(10)
             ->get()
             ->map(fn ($m) => [
-                'type'        => 'membership',
-                'id'          => $m->id,
-                'label'       => $m->user?->full_name ?? '—',
-                'sub'         => $m->campaign?->name ?? '—',
-                'status'      => $m->status->label(),
-                'action_url'  => "/memberships/{$m->id}/validate",
-                'created_at'  => $m->created_at?->toIso8601String(),
+                'type'          => 'membership',
+                'id'            => $m->id,
+                'label'         => $m->user?->full_name ?? '—',
+                'sub'           => $m->campaign?->name ?? '—',
+                'status'        => $m->status->label(),
+                'action_url'    => "/memberships/{$m->id}/validate",
+                'created_at'    => $m->created_at?->toIso8601String(),
+                // Champs structurés (additifs) — le front n'a plus à parser `sub`.
+                'amount_minor'  => null,
+                'campaign_name' => $m->campaign?->name,
+                'status_code'   => $m->status->value,
+                'member_name'   => $m->user?->full_name,
             ]);
 
-        $pendingLoans = LoanRequest::with(['membership.user', 'membership.campaign'])
+        $pendingLoans = LoanRequest::with(['user', 'membership.campaign'])
             ->whereIn('status', ['pending', 'approved', 'countersigning', 'countersigned'])
             ->orderBy('created_at')
             ->limit(10)
@@ -111,11 +119,16 @@ class AdminStatsController extends Controller
             ->map(fn ($r) => [
                 'type'       => 'loan_request',
                 'id'         => $r->id,
-                'label'      => $r->membership?->user?->full_name ?? '—',
-                'sub'        => number_format($r->amount_minor) . ' XOF — ' . ($r->membership?->campaign?->name ?? '—'),
+                'label'      => $r->user?->full_name ?? '—',
+                'sub'        => Money::format((int) $r->amount_minor) . ' — ' . ($r->membership?->campaign?->name ?? 'Prêt communautaire'),
                 'status'     => $r->status->label(),
                 'action_url' => "/loans/requests/{$r->id}",
                 'created_at' => $r->created_at?->toIso8601String(),
+                'amount_minor'  => (int) $r->amount_minor,
+                'campaign_name' => $r->membership?->campaign?->name,
+                'status_code'   => $r->status->value,
+                'member_name'   => $r->user?->full_name,
+                'product_type'  => $r->product_type?->value,
             ]);
 
         $pendingWithdrawals = EarlyWithdrawal::with(['user', 'membership.campaign'])
@@ -127,10 +140,14 @@ class AdminStatsController extends Controller
                 'type'       => 'early_withdrawal',
                 'id'         => $w->id,
                 'label'      => $w->user?->full_name ?? '—',
-                'sub'        => number_format($w->amount_minor) . ' XOF — ' . ($w->membership?->campaign?->name ?? '—'),
+                'sub'        => Money::format((int) $w->amount_minor) . ' — ' . ($w->membership?->campaign?->name ?? '—'),
                 'status'     => $w->status->label(),
                 'action_url' => "/withdrawals/{$w->id}",
                 'created_at' => $w->created_at?->toIso8601String(),
+                'amount_minor'  => (int) $w->amount_minor,
+                'campaign_name' => $w->membership?->campaign?->name,
+                'status_code'   => $w->status->value,
+                'member_name'   => $w->user?->full_name,
             ]);
 
         $items = collect($pendingMemberships)->concat($pendingLoans)->concat($pendingWithdrawals)
@@ -142,17 +159,19 @@ class AdminStatsController extends Controller
 
     public function reconciliation(Request $request): JsonResponse
     {
-        $from = $request->query('from', now()->subDays(7)->toDateString());
-        $to   = $request->query('to',   now()->toDateString());
+        // Journées en date locale métier (les created_at sont stockés en UTC).
+        $from      = $request->query('from', BusinessTime::now()->subDays(7)->toDateString());
+        $to        = $request->query('to',   BusinessTime::todayDate());
+        $localDate = BusinessTime::localDateSql('created_at');
 
         $rows = DB::table('payments')
-            ->selectRaw("DATE(created_at) as date,
+            ->selectRaw("{$localDate} as date,
                 channel,
                 status,
                 COUNT(*) as count,
                 COALESCE(SUM(amount_minor), 0) as total_minor")
-            ->whereBetween(DB::raw("DATE(created_at)"), [$from, $to])
-            ->groupByRaw('DATE(created_at), channel, status')
+            ->whereBetween(DB::raw($localDate), [$from, $to])
+            ->groupByRaw("{$localDate}, channel, status")
             ->orderByDesc('date')
             ->orderBy('channel')
             ->get();
@@ -184,29 +203,34 @@ class AdminStatsController extends Controller
     public function membersByCampaign(Request $request): JsonResponse
     {
         $period = $request->query('period', 'month');
-        $year   = (int) $request->query('year',  now()->year);
-        $month  = (int) $request->query('month', now()->month);
+        $now    = BusinessTime::now();
+        $year   = (int) $request->query('year',  $now->year);
+        $month  = (int) $request->query('month', $now->month);
 
         $frMonths = ['', 'Janvier', 'Février', 'Mars', 'Avril', 'Mai', 'Juin',
                      'Juillet', 'Août', 'Septembre', 'Octobre', 'Novembre', 'Décembre'];
 
         [$from, $to, $periodLabel] = match ($period) {
             'year'   => [
-                now()->setYear($year)->startOfYear(),
-                now()->setYear($year)->endOfYear(),
+                $now->copy()->setYear($year)->startOfYear(),
+                $now->copy()->setYear($year)->endOfYear(),
                 (string) $year,
             ],
             'custom' => [
-                now()->parse($request->query('from', now()->toDateString()))->startOfDay(),
-                now()->parse($request->query('to',   now()->toDateString()))->endOfDay(),
+                BusinessTime::parse($request->query('from', $now->toDateString()))->startOfDay(),
+                BusinessTime::parse($request->query('to',   $now->toDateString()))->endOfDay(),
                 $request->query('from') . ' – ' . $request->query('to'),
             ],
             default  => [
-                now()->setYear($year)->setMonth($month)->startOfMonth(),
-                now()->setYear($year)->setMonth($month)->endOfMonth(),
+                $now->copy()->setDay(1)->setYear($year)->setMonth($month)->startOfMonth(),
+                $now->copy()->setDay(1)->setYear($year)->setMonth($month)->endOfMonth(),
                 ($frMonths[$month] ?? '') . ' ' . $year,
             ],
         };
+
+        // Bornes locales métier → UTC pour la comparaison aux timestamps stockés.
+        $from = $from->copy()->utc();
+        $to   = $to->copy()->utc();
 
         $rows = DB::table('memberships')
             ->join('tontine_campaigns', 'memberships.campaign_id', '=', 'tontine_campaigns.id')
@@ -227,29 +251,34 @@ class AdminStatsController extends Controller
     public function collectionsByCampaign(Request $request): JsonResponse
     {
         $period = $request->query('period', 'month');
-        $year   = (int) $request->query('year',  now()->year);
-        $month  = (int) $request->query('month', now()->month);
+        $now    = BusinessTime::now();
+        $year   = (int) $request->query('year',  $now->year);
+        $month  = (int) $request->query('month', $now->month);
 
         $frMonths = ['', 'Janvier', 'Février', 'Mars', 'Avril', 'Mai', 'Juin',
                      'Juillet', 'Août', 'Septembre', 'Octobre', 'Novembre', 'Décembre'];
 
         [$from, $to, $periodLabel] = match ($period) {
             'year'   => [
-                now()->setYear($year)->startOfYear(),
-                now()->setYear($year)->endOfYear(),
+                $now->copy()->setYear($year)->startOfYear(),
+                $now->copy()->setYear($year)->endOfYear(),
                 (string) $year,
             ],
             'custom' => [
-                now()->parse($request->query('from', now()->toDateString()))->startOfDay(),
-                now()->parse($request->query('to',   now()->toDateString()))->endOfDay(),
+                BusinessTime::parse($request->query('from', $now->toDateString()))->startOfDay(),
+                BusinessTime::parse($request->query('to',   $now->toDateString()))->endOfDay(),
                 $request->query('from') . ' – ' . $request->query('to'),
             ],
             default  => [
-                now()->setYear($year)->setMonth($month)->startOfMonth(),
-                now()->setYear($year)->setMonth($month)->endOfMonth(),
+                $now->copy()->setDay(1)->setYear($year)->setMonth($month)->startOfMonth(),
+                $now->copy()->setDay(1)->setYear($year)->setMonth($month)->endOfMonth(),
                 ($frMonths[$month] ?? '') . ' ' . $year,
             ],
         };
+
+        // Bornes locales métier → UTC pour la comparaison aux timestamps stockés.
+        $from = $from->copy()->utc();
+        $to   = $to->copy()->utc();
 
         $rows = DB::table('payments')
             ->join('memberships',       'payments.membership_id',   '=', 'memberships.id')
@@ -293,17 +322,16 @@ class AdminStatsController extends Controller
     /**
      * Tendances du tableau de bord : série journalière des encaissements (cash vs MoMo),
      * variations mois en cours vs même période du mois précédent, répartition par canal.
-     * Les journées sont calculées dans le fuseau de l'application (les timestamps sont stockés en UTC).
+     * Les journées sont calculées dans le fuseau métier (kafo.business_timezone ; timestamps stockés en UTC).
      */
     public function trends(Request $request): JsonResponse
     {
-        $tz   = config('app.timezone', 'UTC');
         $days = (int) $request->query('days', 7) === 30 ? 30 : 7;
-        $now  = now($tz);
+        $now  = BusinessTime::now();
 
         // Série journalière
         $seriesFrom = $now->copy()->subDays($days - 1)->startOfDay();
-        $localDate  = "DATE((confirmed_at AT TIME ZONE 'UTC') AT TIME ZONE '{$tz}')";
+        $localDate  = BusinessTime::localDateSql('confirmed_at');
 
         $rows = Payment::where('status', 'confirmed')
             ->where('confirmed_at', '>=', $seriesFrom->copy()->utc())

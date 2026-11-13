@@ -16,7 +16,7 @@ class Membership extends Model
     protected $table = 'memberships';
 
     protected $fillable = [
-        'user_id', 'campaign_id', 'status', 'committed_amount_minor',
+        'user_id', 'campaign_id', 'status', 'committed_amount_minor', 'membership_fee_minor',
         'validated_l1_by', 'validated_l1_at',
         'validated_l2_by', 'validated_l2_at',
         'suspended_by', 'suspended_at', 'suspension_reason',
@@ -26,6 +26,7 @@ class Membership extends Model
     protected $casts = [
         'status'                  => MembershipStatus::class,
         'committed_amount_minor'  => 'integer',
+        'membership_fee_minor'    => 'integer',
         'validated_l1_at'         => 'datetime',
         'validated_l2_at'         => 'datetime',
         'suspended_at'            => 'datetime',

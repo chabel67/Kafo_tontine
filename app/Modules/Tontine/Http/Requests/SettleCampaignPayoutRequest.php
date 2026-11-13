@@ -17,6 +17,12 @@ class SettleCampaignPayoutRequest extends FormRequest
         return [
             'channel' => ['required', 'string', 'in:cash,mtn,orange,moov,wave'],
             'phone'   => ['nullable', 'string', 'regex:/^\+\d{7,15}$/'],
+            // Anti double règlement : rejouer la même requête renvoie le payout réglé.
+            'idempotency_key' => ['nullable', 'string', 'min:8', 'max:100'],
+            // R-CAMP-14 : remboursement volontaire d'un prêt communautaire (facultatif).
+            'loan_repayment'              => ['nullable', 'array'],
+            'loan_repayment.loan_id'      => ['required_with:loan_repayment', 'uuid'],
+            'loan_repayment.amount_minor' => ['required_with:loan_repayment', 'integer', 'min:1'],
         ];
     }
 

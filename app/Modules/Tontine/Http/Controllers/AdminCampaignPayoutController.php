@@ -48,13 +48,15 @@ class AdminCampaignPayoutController extends Controller
                 'reason'                    => $data['reason'],
                 'payouts_count'             => $result['payouts_count'],
                 'cancelled_advances_count'  => $result['cancelled_advances_count'],
+                'rejected_withdrawals_count' => $result['rejected_withdrawals_count'],
             ],
         );
 
         return ApiResponse::success([
-            'campaign_id'              => $campaign->id,
-            'payouts_count'            => $result['payouts_count'],
-            'cancelled_advances_count' => $result['cancelled_advances_count'],
+            'campaign_id'                => $campaign->id,
+            'payouts_count'              => $result['payouts_count'],
+            'cancelled_advances_count'   => $result['cancelled_advances_count'],
+            'rejected_withdrawals_count' => $result['rejected_withdrawals_count'],
         ]);
     }
 
@@ -87,22 +89,41 @@ class AdminCampaignPayoutController extends Controller
     public function show(CampaignPayout $payout): JsonResponse
     {
         $payout->load(['campaign', 'membership.user']);
-        return ApiResponse::success(new CampaignPayoutResource($payout));
+
+        return ApiResponse::success([
+            ...(new CampaignPayoutResource($payout))->resolve(),
+            // Calcul en direct (payout en attente) + prêts communautaires actifs du membre.
+            'settlement' => $this->payouts->settlementContext($payout),
+        ]);
     }
 
     public function settle(SettleCampaignPayoutRequest $request, CampaignPayout $payout): JsonResponse
     {
         $data = $request->validated();
-        $settled = $this->payouts->settle($payout, $data['channel'], $data['phone'] ?? null, $request->user());
-
-        $this->audit->logFromRequest($request, 'campaign_payout.settle', 'campaign_payout', $payout->id,
-            ['status' => 'pending'],
-            [
-                'status'  => 'settled',
-                'channel' => $data['channel'],
-                'net'     => $settled->net_amount_minor,
-            ],
+        $wasPending = $payout->status === \App\Modules\Tontine\Domain\Enums\CampaignPayoutStatus::Pending;
+        $settled = $this->payouts->settle(
+            $payout,
+            $data['channel'],
+            $data['phone'] ?? null,
+            $request->user(),
+            $data['idempotency_key'] ?? null,
+            $data['loan_repayment'] ?? null,
         );
+
+        // Un rejeu idempotent ne produit pas une seconde entrée d'audit.
+        if ($wasPending) {
+            $this->audit->logFromRequest($request, 'campaign_payout.settle', 'campaign_payout', $payout->id,
+                ['status' => 'pending'],
+                array_filter([
+                    'status'               => 'settled',
+                    'channel'              => $data['channel'],
+                    'net'                  => $settled->net_amount_minor,
+                    'loan_repayment_minor' => $settled->loan_repayment_minor ?: null,
+                    'loan_repayment_id'    => $settled->loan_repayment_id,
+                    'paid_out_minor'       => $settled->net_amount_minor - $settled->loan_repayment_minor,
+                ], fn ($v) => $v !== null),
+            );
+        }
 
         return ApiResponse::success(new CampaignPayoutResource($settled->load(['campaign', 'membership.user'])));
     }

@@ -8,6 +8,7 @@ use App\Modules\Ledger\Application\LedgerService;
 use App\Modules\Ledger\Domain\Enums\AccountType;
 use App\Modules\Tontine\Domain\Enums\ContributionMode;
 use App\Modules\Tontine\Domain\Enums\MembershipStatus;
+use App\Modules\Tontine\Domain\Exceptions\TontineRuleException;
 use App\Modules\Tontine\Infrastructure\Models\Campaign;
 use App\Modules\Tontine\Infrastructure\Models\Membership;
 use Illuminate\Support\Facades\DB;
@@ -21,12 +22,19 @@ class MembershipService
 
     public function enroll(User $member, Campaign $campaign, ?int $committedAmount = null): Membership
     {
+        return DB::transaction(fn () => $this->enrollLocked($member, $committedAmount,
+            // Verrou campagne : sérialise les enrôlements (plafond max_members) et bloque une clôture concurrente.
+            Campaign::whereKey($campaign->id)->lockForUpdate()->firstOrFail()));
+    }
+
+    private function enrollLocked(User $member, ?int $committedAmount, Campaign $campaign): Membership
+    {
         if ($campaign->status->value !== 'open' && $campaign->status->value !== 'active') {
-            throw new \RuntimeException('Campaign is not accepting new members.', 422);
+            throw new TontineRuleException('La campagne n\'accepte pas de nouvelles adhésions.', 'campaign_not_accepting_members', 422);
         }
 
         if (Membership::where('user_id', $member->id)->where('campaign_id', $campaign->id)->exists()) {
-            throw new \RuntimeException('Member already enrolled in this campaign.', 409);
+            throw new TontineRuleException('Ce membre est déjà inscrit à cette campagne.', 'already_enrolled', 409);
         }
 
         if ($campaign->max_members !== null) {
@@ -34,7 +42,7 @@ class MembershipService
                 ->whereIn('status', ['pending_l1', 'pending_l2', 'active'])
                 ->count();
             if ($current >= $campaign->max_members) {
-                throw new \RuntimeException('Campaign is full.', 422);
+                throw new TontineRuleException('La campagne est complète.', 'campaign_full', 422);
             }
         }
 
@@ -46,7 +54,37 @@ class MembershipService
             'campaign_id'            => $campaign->id,
             'status'                 => MembershipStatus::PendingL1->value,
             'committed_amount_minor' => $resolved,
+            // R-FEE-01 : frais d'adhésion figés au moment de l'enrôlement (contrat).
+            'membership_fee_minor'   => (int) $campaign->membership_fee_minor,
         ]);
+    }
+
+    /**
+     * R-FEE-02 : frais d'adhésion dus / payés / restant à payer (paiements confirmés
+     * d'objet `membership_fee`). Jamais confondus avec les cotisations ni l'épargne.
+     *
+     * @return array{due_minor:int, paid_minor:int, remaining_minor:int}
+     */
+    public static function feeStatus(Membership $membership): array
+    {
+        $due  = (int) $membership->membership_fee_minor;
+        $paid = $due > 0
+            ? (int) \App\Modules\Payments\Infrastructure\Models\Payment::where('membership_id', $membership->id)
+                ->where('purpose', 'membership_fee')
+                ->where('status', 'confirmed')
+                ->sum('amount_minor')
+            : 0;
+
+        return ['due_minor' => $due, 'paid_minor' => $paid, 'remaining_minor' => max(0, $due - $paid)];
+    }
+
+    /** R-FEE-03 : aucune activation tant que les frais d'adhésion ne sont pas entièrement réglés. */
+    private function assertFeePaid(Membership $membership): void
+    {
+        $remaining = self::feeStatus($membership)['remaining_minor'];
+        if ($remaining > 0) {
+            throw TontineRuleException::membershipFeeUnpaid($remaining);
+        }
     }
 
     private function resolveCommittedAmount(Campaign $campaign, ?int $provided): int
@@ -58,23 +96,25 @@ class MembershipService
 
         // Mode custom : montant obligatoire
         if ($provided === null) {
-            throw new \RuntimeException('committed_amount is required for custom contribution campaigns.', 422);
+            throw new TontineRuleException('Le montant d\'engagement est obligatoire en cotisation personnalisée.', 'committed_amount_required', 422);
         }
 
         if ($provided <= 0) {
-            throw new \RuntimeException('committed_amount must be greater than zero.', 422);
+            throw new TontineRuleException('Le montant d\'engagement doit être supérieur à zéro.', 'committed_amount_invalid', 422);
         }
 
         if ($campaign->min_contribution_minor !== null && $provided < $campaign->min_contribution_minor) {
-            throw new \RuntimeException(
-                "committed_amount ({$provided}) is below the minimum allowed ({$campaign->min_contribution_minor}).",
+            throw new TontineRuleException(
+                "Montant d'engagement ({$provided} XOF) inférieur au minimum de la campagne ({$campaign->min_contribution_minor} XOF).",
+                'committed_amount_out_of_bounds',
                 422,
             );
         }
 
         if ($campaign->max_contribution_minor !== null && $provided > $campaign->max_contribution_minor) {
-            throw new \RuntimeException(
-                "committed_amount ({$provided}) exceeds the maximum allowed ({$campaign->max_contribution_minor}).",
+            throw new TontineRuleException(
+                "Montant d'engagement ({$provided} XOF) supérieur au maximum de la campagne ({$campaign->max_contribution_minor} XOF).",
+                'committed_amount_out_of_bounds',
                 422,
             );
         }
@@ -85,11 +125,15 @@ class MembershipService
     public function validateL1(Membership $membership, User $validator): Membership
     {
         if ($membership->status !== MembershipStatus::PendingL1) {
-            throw new \RuntimeException('Membership is not pending L1 validation.', 422);
+            throw new TontineRuleException('L\'adhésion n\'attend pas de validation de niveau 1.', 'invalid_membership_transition', 422);
         }
 
         $needsL2 = $membership->campaign->rules['require_l2_validation'] ?? false;
         $newStatus = $needsL2 ? MembershipStatus::PendingL2 : MembershipStatus::Active;
+
+        if ($newStatus === MembershipStatus::Active) {
+            $this->assertFeePaid($membership);
+        }
 
         DB::transaction(function () use ($membership, $validator, $newStatus) {
             $membership->update([
@@ -116,12 +160,14 @@ class MembershipService
     public function validateL2(Membership $membership, User $validator): Membership
     {
         if ($membership->status !== MembershipStatus::PendingL2) {
-            throw new \RuntimeException('Membership is not pending L2 validation.', 422);
+            throw new TontineRuleException('L\'adhésion n\'attend pas de validation de niveau 2.', 'invalid_membership_transition', 422);
         }
 
         if ($membership->validated_l1_by === $validator->id) {
-            throw new \RuntimeException('L2 validator must be different from L1 validator.', 422);
+            throw new TontineRuleException('Le validateur de niveau 2 doit être différent de celui du niveau 1.', 'maker_checker_violation', 422);
         }
+
+        $this->assertFeePaid($membership);
 
         DB::transaction(function () use ($membership, $validator) {
             $membership->update([
@@ -146,7 +192,7 @@ class MembershipService
     public function suspend(Membership $membership, User $actor, string $reason): Membership
     {
         if ($membership->status !== MembershipStatus::Active) {
-            throw new \RuntimeException('Only active memberships can be suspended.', 422);
+            throw new TontineRuleException('Seule une adhésion active peut être suspendue.', 'invalid_membership_transition', 422);
         }
 
         $membership->update([
@@ -180,7 +226,7 @@ class MembershipService
     public function reactivate(Membership $membership, User $actor): Membership
     {
         if ($membership->status !== MembershipStatus::Suspended) {
-            throw new \RuntimeException('Only suspended memberships can be reactivated.', 422);
+            throw new TontineRuleException('Seule une adhésion suspendue peut être réactivée.', 'invalid_membership_transition', 422);
         }
 
         $membership->update([

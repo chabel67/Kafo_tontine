@@ -22,7 +22,7 @@ class Campaign extends Model
         'contribution_amount_minor', 'min_contribution_minor', 'max_contribution_minor',
         'duration_installments', 'first_installment_date', 'grace_period_days',
         'min_membership_age_days', 'min_trust_score', 'maker_checker_threshold_minor',
-        'max_members', 'rules', 'opened_at', 'activated_at', 'closed_at',
+        'max_members', 'allow_early_withdrawals', 'membership_fee_minor', 'rules', 'opened_at', 'activated_at', 'closed_at',
     ];
 
     protected $casts = [
@@ -37,6 +37,8 @@ class Campaign extends Model
         'min_trust_score'               => 'integer',
         'maker_checker_threshold_minor' => 'integer',
         'max_members'                   => 'integer',
+        'allow_early_withdrawals'       => 'boolean',
+        'membership_fee_minor'          => 'integer',
         'first_installment_date'        => 'date',
         'opened_at'                     => 'datetime',
         'activated_at'                  => 'datetime',

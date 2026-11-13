@@ -31,7 +31,7 @@ class MemberCampaignPayoutController extends Controller
             ->exists();
 
         if (! $ownsMembership) {
-            return ApiResponse::error('forbidden', 'This payout does not belong to you.', 403);
+            return ApiResponse::error('forbidden', 'Ce versement ne vous appartient pas.', 403);
         }
 
         $payout->load(['campaign']);

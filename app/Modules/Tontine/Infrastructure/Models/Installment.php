@@ -6,7 +6,9 @@ use App\Modules\Identity\Infrastructure\Models\User;
 use App\Modules\Tontine\Domain\Enums\InstallmentStatus;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Support\Facades\DB;
 
 class Installment extends Model
 {
@@ -44,5 +46,30 @@ class Installment extends Model
     public function waivedBy(): BelongsTo
     {
         return $this->belongsTo(User::class, 'waived_by');
+    }
+
+    /**
+     * Ajoute `paid_minor` : somme déjà affectée à l'échéance (table installment_payments,
+     * alimentée par Payments à la confirmation d'un paiement — R-SCHED-05).
+     */
+    public function scopeWithPaidMinor(Builder $query): Builder
+    {
+        if ($query->getQuery()->columns === null) {
+            $query->select('installments.*');
+        }
+
+        return $query->addSelect(['paid_minor' => DB::table('installment_payments')
+            ->selectRaw('COALESCE(SUM(amount_minor), 0)')
+            ->whereColumn('installment_payments.installment_id', 'installments.id')]);
+    }
+
+    /** Reste dû : 0 pour une échéance payée ou annulée. */
+    public function remainingMinor(): int
+    {
+        if (in_array($this->status, [InstallmentStatus::Paid, InstallmentStatus::Waived], true)) {
+            return 0;
+        }
+
+        return max(0, $this->amount_minor - (int) ($this->paid_minor ?? 0));
     }
 }

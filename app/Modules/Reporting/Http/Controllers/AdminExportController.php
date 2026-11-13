@@ -7,6 +7,7 @@ use App\Modules\Ledger\Application\LedgerJournalService;
 use App\Modules\Ledger\Application\LedgerService;
 use App\Modules\Ledger\Infrastructure\Models\LedgerEntry;
 use App\Modules\Lending\Infrastructure\Models\Loan;
+use App\Shared\BusinessTime;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
 use Illuminate\Support\Carbon;
@@ -21,24 +22,30 @@ class AdminExportController extends Controller
      */
     public function ledger(Request $request): StreamedResponse
     {
-        $from = $request->query('from') ? now()->parse($request->query('from'))->startOfDay() : now()->startOfMonth();
-        $to   = $request->query('to')   ? now()->parse($request->query('to'))->endOfDay()   : now()->endOfDay();
+        // Période en jours locaux métier ; bornes converties en UTC pour la requête.
+        $now  = BusinessTime::now();
+        $from = $request->query('from') ? BusinessTime::parse($request->query('from'))->startOfDay() : $now->copy()->startOfMonth();
+        $to   = $request->query('to')   ? BusinessTime::parse($request->query('to'))->endOfDay()   : $now->copy()->endOfDay();
+        $tz   = BusinessTime::timezone();
 
         $filename = "grand-livre-{$from->format('Y-m-d')}-au-{$to->format('Y-m-d')}.csv";
 
-        return response()->streamDownload(function () use ($from, $to) {
+        $fromUtc = $from->copy()->utc();
+        $toUtc   = $to->copy()->utc();
+
+        return response()->streamDownload(function () use ($fromUtc, $toUtc, $tz) {
             $handle = fopen('php://output', 'w');
             fprintf($handle, chr(0xEF).chr(0xBB).chr(0xBF)); // BOM UTF-8 pour Excel
 
             fputcsv($handle, ['Date', 'Référence TXN', 'Description', 'Compte', 'Type compte', 'Sens', 'Montant (XOF)'], ';');
 
             LedgerEntry::with(['transaction', 'account'])
-                ->whereHas('transaction', fn ($q) => $q->whereBetween('created_at', [$from, $to]))
+                ->whereHas('transaction', fn ($q) => $q->whereBetween('created_at', [$fromUtc, $toUtc]))
                 ->orderBy('created_at')
                 ->chunk(500, function ($entries) use ($handle) {
                     foreach ($entries as $e) {
                         fputcsv($handle, [
-                            $e->created_at?->format('Y-m-d H:i:s'),
+                            $e->created_at?->copy()->timezone($tz)->format('Y-m-d H:i:s'),
                             $e->transaction?->reference,
                             $e->transaction?->description,
                             $e->account?->key,
@@ -61,7 +68,7 @@ class AdminExportController extends Controller
      */
     public function members(Request $request): StreamedResponse
     {
-        $filename = 'membres-' . now()->format('Y-m-d') . '.csv';
+        $filename = 'membres-' . BusinessTime::todayDate() . '.csv';
 
         return response()->streamDownload(function () {
             $handle = fopen('php://output', 'w');
@@ -93,7 +100,7 @@ class AdminExportController extends Controller
      */
     public function loans(Request $request): StreamedResponse
     {
-        $filename = 'portefeuille-avances-' . now()->format('Y-m-d') . '.csv';
+        $filename = 'portefeuille-avances-' . BusinessTime::todayDate() . '.csv';
 
         return response()->streamDownload(function () {
             $handle = fopen('php://output', 'w');
@@ -105,7 +112,7 @@ class AdminExportController extends Controller
                 '% remboursé', 'Statut', 'Canal', 'Date décaissement',
             ], ';');
 
-            Loan::with(['membership.user', 'membership.campaign'])
+            Loan::with(['user', 'membership.campaign'])
                 ->orderBy('created_at')
                 ->chunk(500, function ($loans) use ($handle) {
                     foreach ($loans as $l) {
@@ -113,9 +120,9 @@ class AdminExportController extends Controller
                         $pct     = $l->principal_minor > 0 ? round($repaid / $l->principal_minor * 100, 1) : 0;
                         fputcsv($handle, [
                             $l->reference,
-                            $l->membership?->user?->full_name ?? '—',
-                            $l->membership?->user?->phone ?? '—',
-                            $l->membership?->campaign?->name ?? '—',
+                            $l->user?->full_name ?? '—',
+                            $l->user?->phone ?? '—',
+                            $l->membership?->campaign?->name ?? 'Prêt communautaire',
                             $l->principal_minor,
                             $l->outstanding_minor,
                             $repaid,
@@ -142,9 +149,8 @@ class AdminExportController extends Controller
      */
     public function journal(Request $request, LedgerJournalService $journal): StreamedResponse
     {
-        $tz   = config('app.timezone', 'Africa/Cotonou');
-        $from = $request->query('from') ? Carbon::parse($request->query('from'), $tz) : null;
-        $to   = $request->query('to')   ? Carbon::parse($request->query('to'),   $tz) : null;
+        $from = $request->query('from') ? BusinessTime::parse($request->query('from')) : null;
+        $to   = $request->query('to')   ? BusinessTime::parse($request->query('to'))   : null;
         $channel = $request->query('channel');
         $operationType = $request->query('operation_type');
 
@@ -173,7 +179,7 @@ class AdminExportController extends Controller
             ], ';');
 
             foreach ($result['data'] as $row) {
-                $dt = Carbon::parse($row['created_at'])->timezone(config('app.timezone', 'Africa/Cotonou'));
+                $dt = Carbon::parse($row['created_at'])->timezone(BusinessTime::timezone());
                 fputcsv($handle, [
                     $dt->format('Y-m-d'),
                     $dt->format('H:i:s'),

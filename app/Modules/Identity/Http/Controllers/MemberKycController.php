@@ -14,19 +14,25 @@ class MemberKycController extends Controller
 {
     public function submit(Request $request): JsonResponse
     {
-        $user = $request->user();
+        $user  = $request->user();
+        $level = (int) $request->input('level', 1);
 
-        if (in_array($user->kyc_status, [KycStatus::Pending, KycStatus::Verified], true)) {
+        // R-KYC-01 : niveau 1 = CNI, niveau 2 = selfie + justificatif, sur un niveau 1 vérifié.
+        // Un seul dossier en examen à la fois : `kyc_status` est commun aux deux niveaux.
+        if ($user->kyc_status === KycStatus::Pending) {
+            return ApiResponse::error('kyc_not_submittable', 'Votre dossier est déjà en cours d\'examen.', 409);
+        }
+
+        // Doublon : le niveau demandé est déjà acquis (kyc_level ne baisse jamais, même après un refus du niveau suivant).
+        if ($user->kyc_level >= $level && in_array($level, [1, 2], true)) {
             return ApiResponse::error(
                 'kyc_not_submittable',
-                $user->kyc_status === KycStatus::Pending
-                    ? 'Votre dossier est déjà en cours d\'examen.'
+                $level === 1 && $user->kyc_level < 2
+                    ? 'Votre identité (niveau 1) est déjà vérifiée. Vous pouvez envoyer le niveau 2.'
                     : 'Votre identité est déjà vérifiée.',
                 409,
             );
         }
-
-        $level = (int) $request->input('level', 1);
 
         if ($level === 2 && $user->kyc_level < 1) {
             return ApiResponse::error('kyc_level_required', 'Le niveau 1 doit être vérifié avant de soumettre le niveau 2.', 422);

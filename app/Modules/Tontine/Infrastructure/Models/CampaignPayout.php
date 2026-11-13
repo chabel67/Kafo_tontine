@@ -15,8 +15,9 @@ class CampaignPayout extends Model
     protected $table = 'campaign_payouts';
 
     protected $fillable = [
-        'reference', 'campaign_id', 'membership_id',
-        'savings_minor', 'advance_offset_minor', 'net_amount_minor',
+        'reference', 'idempotency_key', 'campaign_id', 'membership_id',
+        'savings_minor', 'advance_offset_minor', 'withdrawals_disbursed_minor', 'net_amount_minor',
+        'loan_repayment_minor', 'loan_repayment_id', 'ledger_transaction_id',
         'status', 'settled_channel', 'settled_phone',
         'settled_at', 'settled_by', 'cancelled_reason',
         'metadata',
@@ -27,6 +28,8 @@ class CampaignPayout extends Model
         'savings_minor'        => 'integer',
         'advance_offset_minor' => 'integer',
         'net_amount_minor'     => 'integer',
+        'withdrawals_disbursed_minor' => 'integer',
+        'loan_repayment_minor' => 'integer',
         'metadata'             => 'array',
         'settled_at'           => 'datetime',
     ];

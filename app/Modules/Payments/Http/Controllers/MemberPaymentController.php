@@ -29,10 +29,29 @@ class MemberPaymentController extends Controller
             'idempotency_key' => ['nullable', 'string', 'max:100'],
         ]);
 
+        // DA-13 : seul un canal MoMo routé par KKiaPay (MTN, Moov) s'initie depuis l'app.
+        // Les espèces se remettent au trésorier ; Orange et Wave ne sont pas routés.
+        $channel = PaymentChannel::from($data['channel']);
+        if (! $channel->isMomo() || ! $channel->isRoutedByPsp()) {
+            return ApiResponse::error(
+                'channel_not_supported',
+                $channel === PaymentChannel::Cash
+                    ? 'Le paiement en espèces se fait auprès de votre trésorier, pas depuis l\'application.'
+                    : "{$channel->label()} n'est pas disponible pour cotiser en ligne. Choisissez MTN MoMo ou Moov Money.",
+                422,
+                ['details' => ['channel' => $channel->value, 'supported_channels' => ['mtn', 'moov']]],
+            );
+        }
+
         $membership = Membership::where('id', $data['membership_id'])
             ->where('user_id', $request->user()->id)
             ->where('status', MembershipStatus::Active)
             ->firstOrFail();
+
+        // Plus de cotisation sur une campagne clôturée (règlement de clôture en cours).
+        if ($membership->campaign()->value('status') === 'closed') {
+            throw \App\Modules\Tontine\Domain\Exceptions\TontineRuleException::campaignNotActive();
+        }
 
         $idempotencyKey = $data['idempotency_key'] ?? Str::uuid()->toString();
 
@@ -41,9 +60,7 @@ class MemberPaymentController extends Controller
             return ApiResponse::success($this->formatWithCheckout($existing));
         }
 
-        $year      = now()->year;
-        $count     = Payment::whereYear('created_at', $year)->count() + 1;
-        $reference = sprintf('PAY-%d-%06d', $year, $count);
+        $reference = \App\Shared\Reference::next('PAY', \App\Shared\Reference::PAY);
 
         $payment = Payment::create([
             'reference'       => $reference,

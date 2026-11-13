@@ -3,6 +3,7 @@
 namespace App\Modules\Ledger\Http\Controllers;
 
 use App\Modules\Audit\Application\AuditService;
+use App\Modules\Ledger\Application\LedgerAccountLabeler;
 use App\Modules\Ledger\Application\LedgerJournalService;
 use App\Modules\Ledger\Application\LedgerManualEntryService;
 use App\Modules\Ledger\Application\LedgerService;
@@ -13,6 +14,7 @@ use App\Modules\Ledger\Infrastructure\Models\LedgerTransaction;
 use App\Modules\Ledger\Http\Resources\LedgerAccountResource;
 use App\Modules\Ledger\Http\Resources\LedgerEntryResource;
 use App\Shared\ApiResponse;
+use App\Shared\BusinessTime;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
@@ -22,8 +24,9 @@ use Illuminate\Validation\Rule;
 class AdminLedgerController extends Controller
 {
     public function __construct(
-        private readonly LedgerService $ledger,
-        private readonly AuditService  $audit,
+        private readonly LedgerService        $ledger,
+        private readonly AuditService         $audit,
+        private readonly LedgerAccountLabeler $labeler,
     ) {}
 
     /** GET /admin/ledger/accounts */
@@ -39,11 +42,14 @@ class AdminLedgerController extends Controller
             ->orderBy('key')
             ->get();
 
+        $labels = $this->labeler->labelsForAccounts($accounts);
+
         // Attach balance to each account
-        $result = $accounts->map(function (LedgerAccount $account) {
+        $result = $accounts->map(function (LedgerAccount $account) use ($labels) {
+            $account->setAttribute('account_label', $labels[$account->key] ?? null);
             $credits = LedgerEntry::where('account_key', $account->key)->where('entry_type', 'credit')->sum('amount_minor');
             $debits  = LedgerEntry::where('account_key', $account->key)->where('entry_type', 'debit')->sum('amount_minor');
-            $account->balance_minor = $account->type->isAsset()
+            $account->balance_minor = $account->type->isDebitNormal()
                 ? (int)($debits - $credits)
                 : (int)($credits - $debits);
             return $account;
@@ -56,7 +62,9 @@ class AdminLedgerController extends Controller
     public function entries(Request $request, string $key): JsonResponse
     {
         $account  = LedgerAccount::where('key', $key)->firstOrFail();
-        $isAsset  = $account->type->isAsset();
+        $label    = $this->labeler->labelsForAccounts([$account])[$account->key] ?? null;
+        $account->setAttribute('account_label', $label);
+        $isAsset  = $account->type->isDebitNormal();
         $perPage  = 25;
         $page     = max(1, (int) $request->query('page', 1));
         $offset   = ($page - 1) * $perPage;
@@ -84,13 +92,14 @@ class AdminLedgerController extends Controller
             ->take($perPage)
             ->get();
 
-        $enriched = $entries->map(function (LedgerEntry $entry) use (&$running, $isAsset) {
+        $enriched = $entries->map(function (LedgerEntry $entry) use (&$running, $isAsset, $label) {
             if ($isAsset) {
                 $running += $entry->entry_type === 'debit' ? $entry->amount_minor : -$entry->amount_minor;
             } else {
                 $running += $entry->entry_type === 'credit' ? $entry->amount_minor : -$entry->amount_minor;
             }
             $entry->running_balance = $running;
+            $entry->setAttribute('account_label', $label);
             return $entry;
         });
 
@@ -116,6 +125,9 @@ class AdminLedgerController extends Controller
     public function transaction(string $id): JsonResponse
     {
         $txn = LedgerTransaction::with('entries')->findOrFail($id);
+
+        $labels = $this->labeler->labelsForKeys($txn->entries->pluck('account_key')->all());
+        $txn->entries->each(fn (LedgerEntry $e) => $e->setAttribute('account_label', $labels[$e->account_key] ?? null));
 
         return ApiResponse::success([
             'id'          => $txn->id,
@@ -207,9 +219,9 @@ class AdminLedgerController extends Controller
             'per_page'       => ['nullable', 'integer', 'min:1', 'max:100'],
         ]);
 
-        $tz   = config('app.timezone', 'Africa/Cotonou');
-        $from = isset($data['from']) ? Carbon::parse($data['from'], $tz) : null;
-        $to   = isset($data['to'])   ? Carbon::parse($data['to'],   $tz) : null;
+        // Dates saisies = dates locales métier (R-LEDGER-08).
+        $from = isset($data['from']) ? BusinessTime::parse($data['from']) : null;
+        $to   = isset($data['to'])   ? BusinessTime::parse($data['to'])   : null;
 
         $result = $journal->forPeriod(
             from:          $from,

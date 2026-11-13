@@ -13,6 +13,7 @@ class PaymentResource extends JsonResource
             'id'              => $this->id,
             'reference'       => $this->reference,
             'channel'         => $this->channel?->value,
+            'purpose'         => $this->purpose ?? 'contribution',
             'channel_label'   => $this->channel?->label(),
             'status'          => $this->status?->value,
             'status_label'    => $this->status?->label(),
@@ -40,6 +41,10 @@ class PaymentResource extends JsonResource
                     'installment_id'  => $ip->installment_id,
                     'sequence_number' => $ip->installment?->sequence_number,
                     'amount_minor'    => $ip->amount_minor,
+                    // Additif (fiche paiement) : contexte de l'échéance couverte
+                    'due_date'                  => $ip->installment?->due_date?->toDateString(),
+                    'installment_amount_minor'  => $ip->installment?->amount_minor,
+                    'installment_status'        => $ip->installment?->status?->value,
                 ])
             ),
         ];

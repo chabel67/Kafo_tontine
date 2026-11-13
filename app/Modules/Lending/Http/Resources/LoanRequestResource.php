@@ -15,6 +15,13 @@ class LoanRequestResource extends JsonResource
             'product_type_label'    => $this->product_type?->label(),
             'campaign_id'           => $this->campaign_id,
             'amount_minor'          => $this->amount_minor,
+            'user_id'               => $this->user_id,
+            // Emprunteur (toujours renseigné, y compris pour un prêt communautaire sans adhésion).
+            'user'                  => $this->user_id ? [
+                'id'        => $this->user?->id,
+                'full_name' => $this->user?->full_name,
+                'phone'     => $this->user?->phone,
+            ] : null,
             'purpose'               => $this->purpose,
             'status'                => $this->status?->value,
             'status_label'          => $this->status?->label(),

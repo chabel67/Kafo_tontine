@@ -47,9 +47,9 @@ class DevLendingSeeder extends Seeder
 
         // ── Comptes ledger partagés ─────────────────────────────────────────
         $this->ledger->openAccount('CASH_BOX',          AccountType::CashBox,   description: 'Caisse physique');
-        $this->ledger->openAccount('MOMO_FLOAT:mtn',    AccountType::MomoFloat, description: 'Float MTN MoMo');
-        $this->ledger->openAccount('MOMO_FLOAT:orange', AccountType::MomoFloat, description: 'Float Orange Money');
-        $this->ledger->openAccount('MOMO_FLOAT:moov',   AccountType::MomoFloat, description: 'Float Moov Money');
+        $this->ledger->openAccount('MOMO_FLOAT:MTN',    AccountType::MomoFloat, description: 'Float MTN MoMo');
+        $this->ledger->openAccount('MOMO_FLOAT:ORANGE', AccountType::MomoFloat, description: 'Float Orange Money');
+        $this->ledger->openAccount('MOMO_FLOAT:MOOV',   AccountType::MomoFloat, description: 'Float Moov Money');
         $this->ledger->openAccount('EXPENSE_LOSS',      AccountType::ExpenseLoss, description: 'Pertes write-off');
 
         // ── Calendriers ─────────────────────────────────────────────────────
@@ -361,7 +361,7 @@ class DevLendingSeeder extends Seeder
         $this->ledger->openAccount($savingsKey, AccountType::MemberSavings, ownerId: $userId, description: "Épargne {$p['name']}");
 
         // ── Échéances + écritures ledger ──────────────────────────────────────
-        $channels = ['CASH_BOX', 'MOMO_FLOAT:mtn', 'MOMO_FLOAT:orange', 'MOMO_FLOAT:moov'];
+        $channels = ['CASH_BOX', 'MOMO_FLOAT:MTN', 'MOMO_FLOAT:ORANGE', 'MOMO_FLOAT:MOOV'];
         for ($seq = 1; $seq <= $totalInstall; $seq++) {
             $dueDate   = $activatedAt->copy()->addDays(($seq - 1) * $cadenceDays);
             $graceEnds = $dueDate->copy()->addDays(3);
@@ -487,7 +487,7 @@ class DevLendingSeeder extends Seeder
 
         $reqId  = $this->insertRequest($mid, $uid, $savings, $trust, $coeff, $amount, $p['purpose'] ?? null, 'disbursed', daysAgo: 15);
         $loanId = $this->createLoan($reqId, $mid, $uid, $amount, $outstanding, 'active', 'orange');
-        $this->postDisbursement($loanId, $amount, $uid, 'MOMO_FLOAT:orange');
+        $this->postDisbursement($loanId, $amount, $uid, 'MOMO_FLOAT:ORANGE');
 
         foreach ($repayments as $i => $repayAmount) {
             $channel = ($i % 2 === 0) ? 'cash' : 'mtn';
@@ -531,7 +531,7 @@ class DevLendingSeeder extends Seeder
 
         $reqId  = $this->insertRequest($mid, $uid, $savings, $trust, $coeff, $amount, $p['purpose'] ?? null, 'disbursed', daysAgo: 20);
         $loanId = $this->createLoan($reqId, $mid, $uid, $amount, 0, 'written_off', 'moov', daysAgo: 18);
-        $this->postDisbursement($loanId, $amount, $uid, 'MOMO_FLOAT:moov');
+        $this->postDisbursement($loanId, $amount, $uid, 'MOMO_FLOAT:MOOV');
 
         // Écriture write-off
         $receivableKey = "LOAN_RECEIVABLE:{$loanId}";
@@ -566,6 +566,8 @@ class DevLendingSeeder extends Seeder
         DB::table('loan_requests')->insert([
             'id'                   => $id,
             'membership_id'        => $mid,
+            'user_id'              => $uid,
+            'campaign_id'          => DB::table('memberships')->where('id', $mid)->value('campaign_id'),
             'amount_minor'         => $amount,
             'purpose'              => $purpose,
             'status'               => $status,
@@ -593,13 +595,15 @@ class DevLendingSeeder extends Seeder
     ): string {
         $this->loanCounter++;
         $loanId = (string) Str::uuid();
-        $ref    = sprintf('LOAN-2026-%06d', $this->loanCounter);
+        $ref    = \App\Shared\Reference::next('LOAN', \App\Shared\Reference::LOAN);
 
         DB::table('loans')->insert([
             'id'                => $loanId,
             'reference'         => $ref,
             'loan_request_id'   => $reqId,
             'membership_id'     => $mid,
+            'user_id'           => $uid,
+            'campaign_id'       => DB::table('memberships')->where('id', $mid)->value('campaign_id'),
             'principal_minor'   => $principal,
             'outstanding_minor' => $outstanding,
             'status'            => $status,
@@ -622,7 +626,7 @@ class DevLendingSeeder extends Seeder
         return $loanId;
     }
 
-    private function postDisbursement(string $loanId, int $amount, string $uid, string $floatKey = 'MOMO_FLOAT:mtn'): void
+    private function postDisbursement(string $loanId, int $amount, string $uid, string $floatKey = 'MOMO_FLOAT:MTN'): void
     {
         $this->ledger->post(
             legs: [
@@ -650,7 +654,7 @@ class DevLendingSeeder extends Seeder
             'updated_at'   => now()->subDays($daysAgo),
         ]);
 
-        $floatKey = ($channel === 'cash') ? 'CASH_BOX' : "MOMO_FLOAT:{$channel}";
+        $floatKey = \App\Modules\Ledger\Domain\ValueObjects\TreasuryAccount::key($channel);
         $this->ledger->post(
             legs: [
                 ['account' => $floatKey,                   'type' => 'debit',  'amount' => $amount],

@@ -2,6 +2,7 @@
 
 namespace App\Modules\Lending\Jobs;
 
+use App\Shared\BusinessTime;
 use App\Modules\Lending\Domain\Enums\LoanStatus;
 use App\Modules\Lending\Domain\Enums\RepaymentScheduleStatus;
 use App\Modules\Lending\Infrastructure\Models\Loan;
@@ -31,11 +32,13 @@ class MarkLateLoanRepaymentsJob implements ShouldQueue
     public function handle(): void
     {
         $grace  = (int) (config('kafo.loan_grace_period_days', 0));
-        $cutoff = Carbon::today()->subDays($grace);
+        $cutoff = BusinessTime::today()->subDays($grace); // jour local métier
 
         $lateCount = LoanRepaymentSchedule::query()
             ->where('status', RepaymentScheduleStatus::Pending->value)
             ->whereDate('due_date', '<', $cutoff)
+            // Seuls les prêts encore actifs : un prêt soldé, passé en perte ou clos n'est pas « en retard ».
+            ->whereIn('loan_id', Loan::where('status', LoanStatus::Active->value)->select('id'))
             ->update([
                 'status'         => RepaymentScheduleStatus::Late->value,
                 'late_marked_at' => now(),

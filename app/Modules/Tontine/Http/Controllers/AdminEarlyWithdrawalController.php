@@ -2,6 +2,7 @@
 
 namespace App\Modules\Tontine\Http\Controllers;
 
+use App\Shared\BusinessTime;
 use App\Modules\Audit\Application\AuditService;
 use App\Modules\Ledger\Application\LedgerService;
 use App\Modules\Lending\Infrastructure\Models\Loan;
@@ -44,17 +45,11 @@ class AdminEarlyWithdrawalController extends Controller
             'to'          => ['nullable', 'date', 'after_or_equal:from'],
         ]);
 
-        $page = EarlyWithdrawal::with(self::RELATIONS)
+        $page = $this->filtered($request)
+            ->with(self::RELATIONS)
             ->when($request->query('status'), fn ($q, $s) => $s === 'awaiting'
                 ? $q->whereIn('status', EarlyWithdrawalStatus::awaitingDecision())
                 : $q->where('status', $s))
-            ->when($request->query('user_id'), fn ($q, $id) => $q->where('user_id', $id))
-            ->when($request->query('campaign_id'), fn ($q, $id) => $q->whereHas('membership', fn ($m) => $m->where('campaign_id', $id)))
-            ->when($request->query('from'), fn ($q, $d) => $q->whereDate('created_at', '>=', $d))
-            ->when($request->query('to'), fn ($q, $d) => $q->whereDate('created_at', '<=', $d))
-            ->when($request->query('search'), fn ($q, $s) => $q->where(fn ($w) => $w
-                ->where('reference', 'ilike', "%{$s}%")
-                ->orWhereHas('user', fn ($u) => $u->where('full_name', 'ilike', "%{$s}%")->orWhere('phone', 'ilike', "%{$s}%"))))
             // File d'instruction : les plus anciennes demandes non traitées d'abord (FIFO)
             ->orderByRaw("CASE WHEN status IN ('pending','under_review','info_requested') THEN 0
                                WHEN status IN ('approved','payout_processing','payout_failed') THEN 1 ELSE 2 END")
@@ -63,20 +58,16 @@ class AdminEarlyWithdrawalController extends Controller
 
         $items = collect($page->items());
 
-        // Disponible estimé par ligne, calculé par lot (pas de N+1)
-        $membershipIds = $items->pluck('membership_id')->unique()->values()->all();
-        $balances      = $this->ledger->balances(array_map(fn ($id) => "MEMBER_SAVINGS:{$id}", $membershipIds));
-        $committed     = EarlyWithdrawal::whereIn('membership_id', $membershipIds)
-            ->whereIn('status', EarlyWithdrawalStatus::committed())
-            ->selectRaw('membership_id, SUM(amount_minor) as total')
-            ->groupBy('membership_id')
-            ->pluck('total', 'membership_id');
+        // Disponible estimé par ligne (R-SAV-01, calcul unique), par lot (pas de N+1).
+        // Pour une demande encore engagée, son propre montant n'est pas déduit d'elle-même.
+        $available = app(\App\Modules\Tontine\Application\SavingsAvailabilityService::class)
+            ->availableMany($items->pluck('membership_id')->all());
 
-        $rows = $items->map(function (EarlyWithdrawal $w) use ($balances, $committed) {
+        $rows = $items->map(function (EarlyWithdrawal $w) use ($available) {
             $own = in_array($w->status->value, EarlyWithdrawalStatus::committed(), true) ? $w->amount_minor : 0;
             return [
                 ...(new EarlyWithdrawalResource($w))->resolve(),
-                'available_minor' => max(0, ($balances["MEMBER_SAVINGS:{$w->membership_id}"] ?? 0) - ((int) ($committed[$w->membership_id] ?? 0) - $own)),
+                'available_minor' => (int) ($available[$w->membership_id] ?? 0) + $own,
             ];
         });
 
@@ -86,6 +77,53 @@ class AdminEarlyWithdrawalController extends Controller
             'current_page' => $page->currentPage(),
             'last_page'    => $page->lastPage(),
         ]);
+    }
+
+    /**
+     * GET /admin/early-withdrawals/counts — nombre de retraits par statut (onglets de la file),
+     * mêmes filtres que la liste hors `status` (user_id, campaign_id, from, to, search).
+     * Réponse : { by_status: { pending: n, … tous les statuts, 0 inclus }, awaiting: n
+     * (pending + under_review + info_requested, comme le filtre `status=awaiting`), total }.
+     */
+    public function counts(Request $request): JsonResponse
+    {
+        $request->validate([
+            'campaign_id' => ['nullable', 'uuid'],
+            'from'        => ['nullable', 'date'],
+            'to'          => ['nullable', 'date', 'after_or_equal:from'],
+        ]);
+
+        $rows = $this->filtered($request)
+            ->toBase()
+            ->selectRaw('status, COUNT(*) as count')
+            ->groupBy('status')
+            ->pluck('count', 'status');
+
+        $byStatus = [];
+        foreach (EarlyWithdrawalStatus::cases() as $status) {
+            $byStatus[$status->value] = (int) ($rows[$status->value] ?? 0);
+        }
+
+        $awaiting = array_sum(array_map(fn ($s) => $byStatus[$s] ?? 0, EarlyWithdrawalStatus::awaitingDecision()));
+
+        return ApiResponse::success([
+            'by_status' => $byStatus,
+            'awaiting'  => $awaiting,
+            'total'     => array_sum($byStatus),
+        ]);
+    }
+
+    /** Filtres communs à la file et à ses compteurs (hors statut). */
+    private function filtered(Request $request): \Illuminate\Database\Eloquent\Builder
+    {
+        return EarlyWithdrawal::query()
+            ->when($request->query('user_id'), fn ($q, $id) => $q->where('user_id', $id))
+            ->when($request->query('campaign_id'), fn ($q, $id) => $q->whereHas('membership', fn ($m) => $m->where('campaign_id', $id)))
+            ->when($request->query('from'), fn ($q, $d) => $q->where('created_at', '>=', BusinessTime::dayBoundsUtc($d)[0]))
+            ->when($request->query('to'), fn ($q, $d) => $q->where('created_at', '<=', BusinessTime::dayBoundsUtc($d)[1]))
+            ->when($request->query('search'), fn ($q, $s) => $q->where(fn ($w) => $w
+                ->where('reference', 'ilike', "%{$s}%")
+                ->orWhereHas('user', fn ($u) => $u->where('full_name', 'ilike', "%{$s}%")->orWhere('phone', 'ilike', "%{$s}%"))));
     }
 
     public function stats(Request $request): JsonResponse
@@ -101,8 +139,10 @@ class AdminEarlyWithdrawalController extends Controller
         $withdrawal->load([...self::RELATIONS, 'attempts.initiatedBy', 'attempts.completedBy']);
         $membershipId = $withdrawal->membership_id;
 
+        // Avances de l'adhésion + prêts communautaires du membre (R-LOAN-16, affichés non déduits).
         $loans = Loan::with('repayments')
-            ->where('membership_id', $membershipId)
+            ->where(fn ($q) => $q->where('membership_id', $membershipId)
+                ->orWhere(fn ($s) => $s->where('user_id', $withdrawal->user_id)->where('product_type', 'standard')))
             ->orderByDesc('created_at')
             ->get();
 

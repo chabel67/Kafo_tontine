@@ -125,6 +125,66 @@ trait BuildsKafoFixtures
         );
     }
 
+    /** Demande d'avance en attente (via le service : snapshot R-SAV, verrous, user_id). */
+    protected function advanceRequest(Membership $membership, int $amountMinor): \App\Modules\Lending\Infrastructure\Models\LoanRequest
+    {
+        return app(\App\Modules\Lending\Application\LendingService::class)->createRequest([
+            'membership'   => $membership,
+            'product_type' => 'advance',
+            'amount_minor' => $amountMinor,
+        ], (User::first() ?? $this->member())->id);
+    }
+
+    /** Avance décaissée en espèces (demande → approbation → décaissement). */
+    protected function advance(Membership $membership, int $amountMinor): \App\Modules\Lending\Infrastructure\Models\Loan
+    {
+        $service = app(\App\Modules\Lending\Application\LendingService::class);
+        $staff   = $this->staff('admin');
+        $request = $this->advanceRequest($membership, $amountMinor);
+        $service->approve($request, $staff->id);
+
+        return $service->disburse($request->fresh(), $staff->id, 'cash', null);
+    }
+
+    /** Prêt communautaire décaissé (rattaché au membre, sans adhésion — R-LOAN-16). */
+    protected function standardLoan(User $user, int $amountMinor, int $interestBps = 0, int $installments = 2): \App\Modules\Lending\Infrastructure\Models\Loan
+    {
+        $service = app(\App\Modules\Lending\Application\LendingService::class);
+        $staff   = $this->staff('admin');
+        $request = $service->createRequest([
+            'user'               => $user,
+            'product_type'       => 'standard',
+            'amount_minor'       => $amountMinor,
+            'interest_rate_bps'  => $interestBps ?: null,
+            'periodicity'        => 'monthly',
+            'installments_count' => $installments,
+            'first_due_date'     => now()->addMonth()->toDateString(),
+        ], $staff->id);
+        $service->approve($request, $staff->id);
+        $request = $request->fresh();
+        if ($request->status->value === 'countersigning') {
+            $service->countersign($request, $this->staff('admin')->id);
+        }
+
+        return $service->disburse($request->fresh(), $staff->id, 'cash', null);
+    }
+
+    /** Somme débits = somme crédits pour CHAQUE transaction du grand livre. */
+    protected function assertLedgerBalanced(): void
+    {
+        $unbalanced = \Illuminate\Support\Facades\DB::table('ledger_entries')
+            ->selectRaw("transaction_id, SUM(CASE WHEN entry_type = 'debit' THEN amount_minor ELSE -amount_minor END) AS diff")
+            ->groupBy('transaction_id')
+            ->havingRaw("SUM(CASE WHEN entry_type = 'debit' THEN amount_minor ELSE -amount_minor END) <> 0")
+            ->count();
+        $this->assertSame(0, $unbalanced, 'toutes les transactions du grand livre sont équilibrées');
+    }
+
+    protected function savingsBalance(Membership $membership): int
+    {
+        return app(LedgerService::class)->balance("MEMBER_SAVINGS:{$membership->id}");
+    }
+
     /** Jeton step-up valide pour l'utilisateur (même mécanisme que RequireStepUpToken). */
     protected function stepUpHeader(User $user): array
     {
@@ -132,5 +192,22 @@ trait BuildsKafoFixtures
         Cache::put("step_up:{$token}", $user->id, 300);
 
         return ['X-Step-Up-Token' => $token];
+    }
+
+    /**
+     * Rend connu le dernier OTP non consommé d'un numéro (l'API ne l'expose jamais) :
+     * on remplace son hash par celui d'un code fixe.
+     */
+    protected function knownOtp(string $phone, string $purpose): string
+    {
+        $otp  = \App\Modules\Identity\Infrastructure\Models\OtpCode::where('phone', $phone)
+            ->where('purpose', $purpose)
+            ->whereNull('consumed_at')
+            ->latest()
+            ->firstOrFail();
+        $code = '424242';
+        $otp->update(['code_hash' => Hash::make($code)]);
+
+        return $code;
     }
 }

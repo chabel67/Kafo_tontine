@@ -15,6 +15,10 @@ class LedgerEntryResource extends JsonResource
             'reference'      => $this->transaction?->reference,
             'description'    => $this->transaction?->description,
             'account_key'    => $this->account_key,
+            'account_label'  => $this->when(
+                $this->resource->getAttribute('account_label') !== null,
+                fn () => $this->resource->getAttribute('account_label'),
+            ),
             'entry_type'     => $this->entry_type,
             'amount_minor'   => $this->amount_minor,
             'running_balance'=> $this->when(isset($this->running_balance), fn () => $this->running_balance),

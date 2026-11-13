@@ -78,6 +78,11 @@ class MemberEarlyWithdrawalController extends Controller
     {
         $this->assertOwner($request, $withdrawal->user_id);
 
+        // Le membre annule tant que l'analyse n'a pas commencé (ou sur demande d'informations).
+        if (! in_array($withdrawal->status->value, ['pending', 'info_requested'], true)) {
+            throw new \App\Modules\Tontine\Domain\Exceptions\InvalidWithdrawalTransitionException($withdrawal->status->value, 'cancelled');
+        }
+
         $old       = $withdrawal->status->value;
         $cancelled = $this->withdrawals->cancel($withdrawal);
 

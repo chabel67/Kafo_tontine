@@ -9,7 +9,7 @@ class PayoutAlreadySettledException extends BusinessException
     public function __construct(string $payoutId)
     {
         parent::__construct(
-            "Payout {$payoutId} is not pending and cannot be settled or cancelled.",
+            "Le versement {$payoutId} n'est plus en attente : il ne peut être ni réglé ni annulé.",
             'payout_not_pending',
             409,
         );

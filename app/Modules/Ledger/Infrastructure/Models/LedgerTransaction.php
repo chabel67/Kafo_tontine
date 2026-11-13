@@ -15,6 +15,8 @@ class LedgerTransaction extends Model
 
     protected $fillable = [
         'reference', 'description', 'reverses_id', 'metadata', 'created_by',
+        // Horodatage posé explicitement par LedgerService (UTC, comme le reste du schéma).
+        'created_at',
     ];
 
     protected $casts = [

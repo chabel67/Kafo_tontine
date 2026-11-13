@@ -254,7 +254,7 @@ class EarlyWithdrawalTest extends TestCase
         $this->assertSame(8000, (int) $entries->where('entry_type', 'debit')->sum('amount_minor'));
         $this->assertSame(8000, (int) $entries->where('entry_type', 'credit')->sum('amount_minor'));
         $this->assertSame("MEMBER_SAVINGS:{$this->membership->id}", $entries->firstWhere('entry_type', 'debit')->account_key);
-        $this->assertSame('MOMO_FLOAT:mtn', $entries->firstWhere('entry_type', 'credit')->account_key);
+        $this->assertSame('MOMO_FLOAT:MTN', $entries->firstWhere('entry_type', 'credit')->account_key);
         $this->assertSame(12000, app(LedgerService::class)->balance("MEMBER_SAVINGS:{$this->membership->id}"));
         $this->assertSame('active', $this->membership->fresh()->status->value, 'l\'adhésion continue');
         $this->assertTrue(InAppNotification::where('user_id', $this->owner->id)->where('title', 'Versement confirmé')->exists());

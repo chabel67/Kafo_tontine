@@ -6,6 +6,6 @@ class PinInvalidException extends BusinessException
 {
     public function __construct()
     {
-        parent::__construct('The PIN is incorrect.', 'pin_invalid', 401);
+        parent::__construct('Le code PIN est incorrect.', 'pin_invalid', 401);
     }
 }

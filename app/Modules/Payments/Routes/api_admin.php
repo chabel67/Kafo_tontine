@@ -8,13 +8,22 @@ use Illuminate\Support\Facades\Route;
 Route::post('/webhooks/psp/{channel}', [WebhookController::class, 'handle']);
 Route::post('/webhooks/kkiapay',       [WebhookController::class, 'handleKkiapay']);
 
+// B-13 — permissions (matrice RolesSeeder). Pas de route « unblock » à ce jour
+// (`payment.unblock` est seedée mais sans endpoint).
 Route::middleware('auth:sanctum')->group(function () {
     Route::prefix('admin/payments')->group(function () {
-        Route::get('/',                        [AdminPaymentController::class, 'index']);
-        Route::post('/cash',                   [AdminPaymentController::class, 'recordCash']);
-        Route::post('/momo',                   [AdminPaymentController::class, 'initiateMomo']);
-        Route::get('/{payment}',               [AdminPaymentController::class, 'show']);
-        Route::post('/{payment}/confirm',      [AdminPaymentController::class, 'confirm']);
-        Route::post('/{payment}/cancel',       [AdminPaymentController::class, 'cancel']);
+        Route::get('/',                        [AdminPaymentController::class, 'index'])
+            ->middleware('permission:payment.view');
+        // Encaissement cash : même permission que la caisse du jour et sa clôture.
+        Route::post('/cash',                   [AdminPaymentController::class, 'recordCash'])
+            ->middleware('permission:cash.validate');
+        Route::post('/momo',                   [AdminPaymentController::class, 'initiateMomo'])
+            ->middleware('permission:payment.validate');
+        Route::get('/{payment}',               [AdminPaymentController::class, 'show'])
+            ->middleware('permission:payment.view');
+        Route::post('/{payment}/confirm',      [AdminPaymentController::class, 'confirm'])
+            ->middleware('permission:payment.confirm');
+        Route::post('/{payment}/cancel',       [AdminPaymentController::class, 'cancel'])
+            ->middleware('permission:payment.cancel');
     });
 });

@@ -2,13 +2,16 @@
 
 namespace App\Modules\Tontine\Application;
 
+use App\Shared\BusinessTime;
 use App\Modules\Identity\Infrastructure\Models\User;
 use App\Modules\Ledger\Application\LedgerService;
+use App\Modules\Audit\Application\AuditService;
 use App\Modules\Ledger\Domain\Enums\AccountType;
-use App\Modules\Lending\Domain\Enums\LoanStatus;
-use App\Modules\Lending\Infrastructure\Models\Loan;
+use App\Modules\Ledger\Domain\ValueObjects\TreasuryAccount;
+use App\Modules\Tontine\Domain\Enums\CampaignStatus;
+use App\Modules\Tontine\Domain\Exceptions\TontineRuleException;
+use App\Modules\Tontine\Infrastructure\Models\Campaign;
 use App\Modules\Notifications\Application\NotificationService;
-use App\Modules\Payments\Infrastructure\Models\Payment;
 use App\Modules\Tontine\Domain\Enums\EarlyWithdrawalStatus as Status;
 use App\Modules\Tontine\Domain\Enums\MembershipStatus;
 use App\Modules\Tontine\Domain\Exceptions\InvalidWithdrawalTransitionException;
@@ -29,8 +32,10 @@ use Illuminate\Validation\ValidationException;
  *                → confirmPayout (UNE écriture ledger DR MEMBER_SAVINGS / CR CASH_BOX|MOMO_FLOAT)
  *                | failPayout (aucune écriture) → nouvelle tentative possible
  *
- * Plafond (décision métier) : solde MEMBER_SAVINGS − retraits engagés (statuts non terminaux).
- * Les dettes sont calculées et affichées à titre informatif, sans être déduites.
+ * Plafond (R-SAV-01, SavingsAvailabilityService) : solde MEMBER_SAVINGS − retraits engagés
+ * − avances actives − demandes d'avance en cours. Les prêts communautaires sont affichés, non déduits.
+ * Garde-fous : campagne active autorisant les retraits (R-WDR-08), adhésion active.
+ * Ordre des verrous : campagne (partagé) → adhésion → retrait, le même que la clôture.
  * Chaque transition verrouille la ligne (lockForUpdate) : ni double approbation, ni double versement.
  */
 class EarlyWithdrawalService
@@ -38,9 +43,14 @@ class EarlyWithdrawalService
     /** Frais de retrait : aucun (décision MVP). Centralisé pour l'affichage du net. */
     public const FEES_MINOR = 0;
 
+    /** Motif posé sur les retraits rejetés automatiquement à la clôture (R-CAMP-15). */
+    public const CLOSURE_REASON = 'campaign_closed';
+
     public function __construct(
-        private readonly LedgerService       $ledger,
-        private readonly NotificationService $notifications,
+        private readonly LedgerService              $ledger,
+        private readonly NotificationService        $notifications,
+        private readonly SavingsAvailabilityService $availability,
+        private readonly AuditService               $audit,
     ) {}
 
     /**
@@ -48,40 +58,7 @@ class EarlyWithdrawalService
      */
     public function breakdown(Membership $membership, ?string $excludeId = null): array
     {
-        $key     = "MEMBER_SAVINGS:{$membership->id}";
-        $savings = $this->ledger->balances([$key])[$key];
-
-        $paid = (int) Payment::where('membership_id', $membership->id)->where('status', 'confirmed')->sum('amount_minor');
-
-        $withdrawn = (int) EarlyWithdrawal::where('membership_id', $membership->id)
-            ->where('status', Status::Disbursed->value)
-            ->sum('amount_minor');
-
-        $committed = (int) EarlyWithdrawal::where('membership_id', $membership->id)
-            ->whereIn('status', Status::committed())
-            ->when($excludeId, fn ($q) => $q->where('id', '!=', $excludeId))
-            ->sum('amount_minor');
-
-        $loans = Loan::where('membership_id', $membership->id)->where('status', LoanStatus::Active->value);
-        $outstanding = (int) (clone $loans)->sum('outstanding_minor');
-        $overdue = (int) DB::table('loan_repayment_schedules')
-            ->whereIn('loan_id', (clone $loans)->select('id'))
-            ->where('status', 'late')
-            ->sum(DB::raw('amount_minor - paid_minor'));
-
-        return [
-            'paid_minor'      => $paid,
-            'savings_minor'   => $savings,
-            'withdrawn_minor' => $withdrawn,
-            'committed_minor' => $committed,
-            'debts'           => [
-                'outstanding_minor' => $outstanding,
-                'overdue_minor'     => $overdue,
-                'deducted'          => false,
-            ],
-            'fees_minor'      => self::FEES_MINOR,
-            'available_minor' => max(0, $savings - $committed),
-        ];
+        return $this->availability->breakdown($membership, $excludeId);
     }
 
     public function available(Membership $membership, ?string $excludeId = null): array
@@ -109,11 +86,15 @@ class EarlyWithdrawalService
         }
 
         $withdrawal = DB::transaction(function () use ($membership, $amountMinor, $reason, $payoutChannel, $payoutPhone, $requester, $via, $idempotencyKey) {
-            // Verrou sur l'adhésion : sérialise les demandes concurrentes (plafond)
-            $membership = Membership::whereKey($membership->id)->lockForUpdate()->firstOrFail();
+            // Verrous : campagne (partagé, bloque une clôture concurrente) puis adhésion
+            // (sérialise les demandes concurrentes sur le même plafond).
+            $membership = $this->lockMembershipForOperation($membership->id);
 
             if ($membership->status !== MembershipStatus::Active) {
                 throw new MembershipNotActiveException();
+            }
+            if (! $membership->campaign->allow_early_withdrawals) {
+                throw TontineRuleException::earlyWithdrawalsDisabled();
             }
 
             $available = $this->breakdown($membership)['available_minor'];
@@ -169,6 +150,10 @@ class EarlyWithdrawalService
     public function respond(EarlyWithdrawal $withdrawal, string $response): EarlyWithdrawal
     {
         return $this->transition($withdrawal, Status::UnderReview, function (EarlyWithdrawal $w) use ($response) {
+            // Seule une demande d'informations appelle une réponse (pas une demande encore en attente).
+            if ($w->status !== Status::InfoRequested) {
+                throw new InvalidWithdrawalTransitionException($w->status->value, Status::UnderReview->value);
+            }
             $w->update(['status' => Status::UnderReview, 'member_response' => $response, 'responded_at' => now()]);
             if ($w->assigned_to) {
                 $this->notifications->notify($w->assigned_to, 'early_withdrawal.responded',
@@ -179,15 +164,23 @@ class EarlyWithdrawalService
 
     public function approve(EarlyWithdrawal $withdrawal, User $actor): EarlyWithdrawal
     {
-        return $this->transition($withdrawal, Status::Approved, function (EarlyWithdrawal $w) use ($actor) {
-            $w->update([
-                'status'      => Status::Approved,
-                'decided_by'  => $actor->id,
-                'decided_at'  => now(),
-                'assigned_to' => $w->assigned_to ?? $actor->id,
-            ]);
-            $this->notify($w, 'Demande de retrait approuvée',
-                "Votre retrait {$w->reference} de {$this->money($w->amount_minor)} est approuvé. Le versement sera effectué prochainement.");
+        // Verrous dans l'ordre de la clôture (campagne → adhésion → retrait) : pas d'interblocage.
+        return DB::transaction(function () use ($withdrawal, $actor) {
+            $membership = $this->lockMembershipForOperation($withdrawal->membership_id);
+
+            return $this->transition($withdrawal, Status::Approved, function (EarlyWithdrawal $w) use ($actor, $membership) {
+                // Le disponible a pu baisser depuis la demande (avance accordée, autre retrait…).
+                $this->assertAvailable($w, $membership);
+
+                $w->update([
+                    'status'      => Status::Approved,
+                    'decided_by'  => $actor->id,
+                    'decided_at'  => now(),
+                    'assigned_to' => $w->assigned_to ?? $actor->id,
+                ]);
+                $this->notify($w, 'Demande de retrait approuvée',
+                    "Votre retrait {$w->reference} de {$this->money($w->amount_minor)} est approuvé. Le versement sera effectué prochainement.");
+            });
         });
     }
 
@@ -227,6 +220,7 @@ class EarlyWithdrawalService
         }
 
         $attempt = DB::transaction(function () use ($withdrawal, $channel, $phone, $idempotencyKey, $actor) {
+            $membership = $this->lockMembershipForOperation($withdrawal->membership_id);
             $w = EarlyWithdrawal::whereKey($withdrawal->id)->lockForUpdate()->firstOrFail();
             $this->assertCanTransition($w, Status::PayoutProcessing);
 
@@ -235,7 +229,6 @@ class EarlyWithdrawalService
                 throw new MakerCheckerViolationException();
             }
 
-            $membership = Membership::whereKey($w->membership_id)->lockForUpdate()->firstOrFail();
             $this->assertAvailable($w, $membership);
 
             $attempt = Attempt::create([
@@ -270,12 +263,19 @@ class EarlyWithdrawalService
 
             $attempt    = $this->processingAttempt($w);
             $membership = Membership::whereKey($w->membership_id)->lockForUpdate()->firstOrFail();
-            $this->assertAvailable($w, $membership);
 
+            // L'argent est déjà remis : le versement reste confirmable même après la clôture
+            // (le règlement du payout attend cette confirmation). La réservation a été
+            // vérifiée au lancement ; on garantit seulement que l'épargne ne devient pas négative.
             $savingsKey = "MEMBER_SAVINGS:{$membership->id}";
-            $floatKey   = $attempt->channel === 'cash' ? 'CASH_BOX' : "MOMO_FLOAT:{$attempt->channel}";
+            $balance    = $this->ledger->balances([$savingsKey])[$savingsKey];
+            if ($w->amount_minor > $balance) {
+                throw new WithdrawalExceedsAvailableException($w->amount_minor, $balance);
+            }
+
+            $floatKey = TreasuryAccount::key($attempt->channel);
             $this->ledger->openAccount(key: $savingsKey, type: AccountType::MemberSavings, ownerId: $membership->user_id);
-            $this->ledger->openAccount(key: $floatKey, type: $attempt->channel === 'cash' ? AccountType::CashBox : AccountType::MomoFloat);
+            $this->ledger->openAccount(key: $floatKey, type: TreasuryAccount::type($attempt->channel));
 
             $txn = $this->ledger->post(
                 legs: [
@@ -334,21 +334,75 @@ class EarlyWithdrawalService
             ]);
             $w->update(['status' => Status::PayoutFailed]);
 
+            // Campagne clôturée entre-temps : pas de nouvelle tentative, le montant
+            // rejoint le règlement de clôture (D2, R-CAMP-15).
+            $campaignStatus = Membership::whereKey($w->membership_id)->with('campaign')->first()?->campaign?->status;
+            if ($campaignStatus !== CampaignStatus::Active) {
+                $this->rejectForClosure($w, $actor);
+            }
+
             return $w->fresh();
         });
 
-        $this->notify($failed, 'Échec du versement',
-            "Le versement de votre retrait {$failed->reference} n'a pas abouti. Une nouvelle tentative sera effectuée.");
+        if ($failed->status === Status::PayoutFailed) {
+            $this->notify($failed, 'Échec du versement',
+                "Le versement de votre retrait {$failed->reference} n'a pas abouti. Une nouvelle tentative sera effectuée.");
+        }
 
         return $failed;
+    }
+
+    /**
+     * R-CAMP-15 (D2) : à la clôture, les retraits non versés sont rejetés (motif
+     * `campaign_closed`), SANS notification ; leur montant reste dans l'épargne et
+     * rejoint le règlement final. Les versements en cours sont conservés : le règlement
+     * de l'adhésion attend leur confirmation ou leur échec.
+     *
+     * Appelé dans la transaction de clôture (campagne et adhésions déjà verrouillées).
+     *
+     * @return int nombre de retraits rejetés
+     */
+    public function rejectOpenForCampaignClosure(Campaign $campaign, User $actor): int
+    {
+        $withdrawals = EarlyWithdrawal::whereIn('membership_id', Membership::where('campaign_id', $campaign->id)->select('id'))
+            ->whereIn('status', Status::rejectedOnClosure())
+            ->lockForUpdate()
+            ->get();
+
+        foreach ($withdrawals as $w) {
+            $this->rejectForClosure($w, $actor);
+        }
+
+        return $withdrawals->count();
+    }
+
+    private function rejectForClosure(EarlyWithdrawal $w, User $actor): void
+    {
+        $from = $w->status->value;
+        $w->update([
+            'status'          => Status::Rejected,
+            'decided_by'      => $actor->id,
+            'decided_at'      => now(),
+            'rejected_reason' => self::CLOSURE_REASON,
+        ]);
+
+        $this->audit->log(
+            action:     'early_withdrawal.reject',
+            entityType: 'early_withdrawal',
+            entityId:   $w->id,
+            oldValues:  ['status' => $from],
+            newValues:  ['status' => Status::Rejected->value, 'reason' => self::CLOSURE_REASON, 'automatic' => true],
+            userId:     $actor->id,
+            userName:   $actor->full_name,
+        );
     }
 
     /** Statistiques sur données réelles (montants et nombres), éventuellement bornées sur une période. */
     public function stats(?string $from, ?string $to): array
     {
         $rows = EarlyWithdrawal::query()
-            ->when($from, fn ($q) => $q->whereDate('created_at', '>=', $from))
-            ->when($to, fn ($q) => $q->whereDate('created_at', '<=', $to))
+            ->when($from, fn ($q) => $q->where('created_at', '>=', BusinessTime::dayBoundsUtc($from)[0]))
+            ->when($to, fn ($q) => $q->where('created_at', '<=', BusinessTime::dayBoundsUtc($to)[1]))
             ->selectRaw('status, COUNT(*) as count, COALESCE(SUM(amount_minor), 0) as total')
             ->groupBy('status')
             ->get()
@@ -370,6 +424,25 @@ class EarlyWithdrawalService
     }
 
     // ── Interne ────────────────────────────────────────────────────────────
+
+    /**
+     * Verrouille la campagne (partagé : bloque une clôture concurrente sans bloquer les autres
+     * membres) puis l'adhésion (exclusif), et exige une campagne active.
+     */
+    private function lockMembershipForOperation(string $membershipId): Membership
+    {
+        $campaignId = Membership::whereKey($membershipId)->value('campaign_id');
+        $campaign   = Campaign::whereKey($campaignId)->sharedLock()->firstOrFail();
+
+        if ($campaign->status !== CampaignStatus::Active) {
+            throw TontineRuleException::campaignNotActive();
+        }
+
+        $membership = Membership::whereKey($membershipId)->lockForUpdate()->firstOrFail();
+        $membership->setRelation('campaign', $campaign);
+
+        return $membership;
+    }
 
     /** Transition verrouillée : relit la ligne sous verrou puis applique $apply si autorisée. */
     private function transition(EarlyWithdrawal $withdrawal, Status $target, callable $apply): EarlyWithdrawal
@@ -420,9 +493,6 @@ class EarlyWithdrawalService
 
     private function nextReference(): string
     {
-        $year  = now()->year;
-        $count = EarlyWithdrawal::whereYear('created_at', $year)->count() + 1;
-
-        return sprintf('WDR-%d-%06d', $year, $count);
+        return \App\Shared\Reference::next('WDR', \App\Shared\Reference::WDR);
     }
 }

@@ -2,6 +2,7 @@
 
 namespace App\Modules\Tontine\Application;
 
+use App\Shared\BusinessTime;
 use App\Modules\Tontine\Domain\Enums\InstallmentStatus;
 use App\Modules\Tontine\Infrastructure\Models\Installment;
 
@@ -26,10 +27,10 @@ class TrustScoreService
 
         $counts = Installment::whereIn('membership_id', $membershipIds)
             ->selectRaw('
-                COUNT(*) FILTER (WHERE due_date <= CURRENT_DATE)  as due,
+                COUNT(*) FILTER (WHERE due_date <= ?)             as due,
                 COUNT(*) FILTER (WHERE late_marked_at IS NOT NULL) as ever_late,
                 COUNT(*) FILTER (WHERE status = ?)                 as late
-            ', [InstallmentStatus::Late->value])
+            ', [BusinessTime::todayDate(), InstallmentStatus::Late->value])
             ->first();
 
         return self::score((int) $counts->due, (int) $counts->ever_late, (int) $counts->late);

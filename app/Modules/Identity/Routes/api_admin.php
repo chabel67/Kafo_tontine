@@ -13,6 +13,10 @@ Route::prefix('admin/auth')->group(function () {
         Route::post('step-up', [AdminAuthController::class, 'stepUp']);
         Route::get('me',       [AdminAuthController::class, 'me']);
         Route::post('logout',  [AdminAuthController::class, 'logout']);
+        // Profil de l'agent connecté (aucune permission : chacun gère son propre compte)
+        Route::post('pin/change',   [AdminAuthController::class, 'changePin'])->middleware('throttle:10,15');
+        Route::post('photo',        [AdminAuthController::class, 'uploadPhoto']);
+        Route::delete('photo',      [AdminAuthController::class, 'deletePhoto']);
     });
 });
 

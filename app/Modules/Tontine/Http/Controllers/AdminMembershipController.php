@@ -121,7 +121,7 @@ class AdminMembershipController extends Controller
 
     public function installments(Membership $membership): JsonResponse
     {
-        $items = $membership->installments()->orderBy('sequence_number')->get();
+        $items = $membership->installments()->withPaidMinor()->orderBy('sequence_number')->get();
 
         return ApiResponse::success(InstallmentResource::collection($items));
     }

@@ -5,6 +5,7 @@ namespace App\Modules\Ledger\Application;
 use App\Modules\Ledger\Domain\Enums\AccountType;
 use App\Modules\Ledger\Domain\Exceptions\InvalidJournalPeriodException;
 use App\Modules\Ledger\Infrastructure\Models\LedgerAccount;
+use App\Shared\BusinessTime;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 
@@ -28,7 +29,10 @@ class LedgerJournalService
         AccountType::MomoFloat,
     ];
 
-    public function __construct(private readonly LedgerService $ledger) {}
+    public function __construct(
+        private readonly LedgerService $ledger,
+        private readonly ?LedgerAccountLabeler $labeler = null,
+    ) {}
 
     /**
      * @return array{data: array, meta: array, summary: array}
@@ -43,17 +47,20 @@ class LedgerJournalService
         int $page = 1,
     ): array {
         [$from, $to] = $this->normalizePeriod($from, $to);
+        // Bornes SQL en UTC (stockage) — $from/$to restent locales pour le résumé.
+        $fromUtc = $from->copy()->utc();
+        $toUtc   = $to->copy()->utc();
 
         $treasuryTypes = array_map(fn ($t) => $t->value, self::TREASURY_TYPES);
 
         // 1) Solde de trésorerie à la borne d'ouverture (avant `from`).
-        $openingTreasury = $this->treasuryBalanceBefore($from, $treasuryTypes);
+        $openingTreasury = $this->treasuryBalanceBefore($fromUtc, $treasuryTypes);
 
         // 2) Fetch des transactions de la période avec :
         //    - Δ trésorerie signé
         //    - compte principal impacté (1er compte de trésorerie touché)
         //    - Δ du compte principal
-        $rows = $this->fetchTransactionsWithDeltas($from, $to, $search, $treasuryTypes);
+        $rows = $this->fetchTransactionsWithDeltas($fromUtc, $toUtc, $search, $treasuryTypes);
 
         // 3) Calcul PHP des running balances (trésorerie globale + compte principal).
         //    Ordre chronologique croissant pour cumul, puis renvoi décroissant.
@@ -61,7 +68,7 @@ class LedgerJournalService
             ?: strcmp($a['id'], $b['id']));
 
         $principalKeys = array_values(array_unique(array_filter(array_column($rows, 'principal_account_key'))));
-        $principalOpenings = $this->accountBalancesBefore($principalKeys, $from);
+        $principalOpenings = $this->accountBalancesBefore($principalKeys, $fromUtc);
 
         $runningTreasury = $openingTreasury;
         $runningPrincipal = $principalOpenings; // clone du map
@@ -151,9 +158,10 @@ class LedgerJournalService
 
     private function normalizePeriod(?Carbon $from, ?Carbon $to): array
     {
-        $tz  = config('app.timezone', 'Africa/Cotonou');
-        $to  = ($to ?? Carbon::now($tz))->copy()->endOfDay();
-        $from = ($from ?? $to->copy()->subDays(self::DEFAULT_DAYS - 1))->copy()->startOfDay();
+        // Jours locaux métier (R-LEDGER-08) : défaut = 30 derniers jours jusqu'à endOfDay(today).
+        $tz   = BusinessTime::timezone();
+        $to   = ($to ?? BusinessTime::now())->copy()->setTimezone($tz)->endOfDay();
+        $from = ($from ?? $to->copy()->subDays(self::DEFAULT_DAYS - 1))->copy()->setTimezone($tz)->startOfDay();
         $days = (int) $from->diffInDays($to) + 1;
         if ($days > self::MAX_PERIOD_DAYS) {
             throw new InvalidJournalPeriodException(self::MAX_PERIOD_DAYS, $days);
@@ -202,7 +210,7 @@ class LedgerJournalService
         $out = [];
         foreach ($rows as $r) {
             $type = AccountType::from($r->account_type);
-            $out[$r->account_key] = $type->isAsset()
+            $out[$r->account_key] = $type->isDebitNormal()
                 ? (int) $r->dr - (int) $r->cr
                 : (int) $r->cr - (int) $r->dr;
         }
@@ -280,25 +288,16 @@ class LedgerJournalService
     private function accountLabels(array $keys): array
     {
         if (empty($keys)) return [];
-        $rows = LedgerAccount::whereIn('key', $keys)->get(['key', 'type', 'description']);
-        $out = [];
-        foreach ($rows as $a) {
-            /** @var LedgerAccount $a */
-            $type = AccountType::from($a->type instanceof AccountType ? $a->type->value : (string) $a->type);
-            // Ex : "MOMO_FLOAT:MTN" → "Float Mobile Money · MTN"
-            $suffix = str_contains($a->key, ':')
-                ? ' · ' . strtoupper(explode(':', $a->key, 2)[1])
-                : '';
-            $out[$a->key] = $type->label() . $suffix;
-        }
-        return $out;
+
+        // Libellés humains partagés avec /admin/ledger/accounts (« Caisse espèces », « MoMo MTN »…).
+        return ($this->labeler ?? app(LedgerAccountLabeler::class))->labelsForKeys($keys);
     }
 
     private function expectedAccountKeyForChannel(string $channel): string
     {
         return $channel === 'cash'
             ? 'CASH_BOX'
-            : 'MOMO_FLOAT:' . strtoupper($channel);
+            : \App\Modules\Ledger\Domain\ValueObjects\TreasuryAccount::key($channel);
     }
 
     /** @return array{0:string,1:string} [operation_type, operation_label] */

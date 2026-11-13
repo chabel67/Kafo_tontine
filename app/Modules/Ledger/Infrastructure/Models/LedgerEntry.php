@@ -13,7 +13,8 @@ class LedgerEntry extends Model
     protected $table      = 'ledger_entries';
     public    $timestamps = false;
 
-    protected $fillable = ['transaction_id', 'account_key', 'entry_type', 'amount_minor'];
+    // created_at posé explicitement par LedgerService (UTC, comme le reste du schéma).
+    protected $fillable = ['transaction_id', 'account_key', 'entry_type', 'amount_minor', 'created_at'];
 
     protected $casts = [
         'amount_minor' => 'integer',

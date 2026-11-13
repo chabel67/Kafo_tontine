@@ -6,6 +6,7 @@ use App\Modules\Audit\Application\AuditService;
 use App\Modules\Lending\Application\EligibilityService;
 use App\Modules\Lending\Application\LendingService;
 use App\Modules\Lending\Domain\Enums\LoanProductType;
+use App\Modules\Lending\Domain\Enums\LoanRequestStatus;
 use App\Modules\Lending\Http\Requests\CreateLoanRequestRequest;
 use App\Modules\Lending\Http\Resources\LoanRequestResource;
 use App\Modules\Lending\Http\Resources\LoanResource;
@@ -31,16 +32,9 @@ class AdminLoanController extends Controller
 
     public function indexRequests(Request $request): JsonResponse
     {
-        $requests = LoanRequest::with(['membership.user', 'membership.campaign', 'campaign', 'decidedBy', 'countersignedBy'])
+        $requests = $this->filteredRequests($request)
+            ->with(['user', 'membership.user', 'membership.campaign', 'campaign', 'decidedBy', 'countersignedBy'])
             ->when($request->query('status'), fn ($q, $s) => $q->where('status', $s))
-            ->when($request->query('product_type'), fn ($q, $t) => $q->where('product_type', $t))
-            ->when($request->query('membership_id'), fn ($q, $id) => $q->where('membership_id', $id))
-            ->when($request->query('campaign_id'), fn ($q, $id) => $q->where('campaign_id', $id))
-            ->when($request->query('search'), fn ($q, $s) =>
-                $q->whereHas('membership.user', fn ($u) =>
-                    $u->where('full_name', 'ilike', "%{$s}%")->orWhere('phone', 'ilike', "%{$s}%")
-                )
-            )
             ->orderByDesc('created_at')
             ->paginate(10);
 
@@ -54,6 +48,42 @@ class AdminLoanController extends Controller
                 'last_page'    => $requests->lastPage(),
             ],
         );
+    }
+
+    /**
+     * GET /admin/loan-requests/counts — nombre de demandes par statut (onglets de la file),
+     * mêmes filtres que la liste hors `status` (product_type, membership_id, campaign_id, search).
+     * Réponse : { by_status: { pending: n, approved: n, … tous les statuts, 0 inclus }, total }.
+     */
+    public function requestCounts(Request $request): JsonResponse
+    {
+        $rows = $this->filteredRequests($request)
+            ->toBase()
+            ->selectRaw('status, COUNT(*) as count')
+            ->groupBy('status')
+            ->pluck('count', 'status');
+
+        $byStatus = [];
+        foreach (LoanRequestStatus::cases() as $status) {
+            $byStatus[$status->value] = (int) ($rows[$status->value] ?? 0);
+        }
+
+        return ApiResponse::success(['by_status' => $byStatus, 'total' => array_sum($byStatus)]);
+    }
+
+    /** Filtres communs à la file et à ses compteurs (hors statut). */
+    private function filteredRequests(Request $request): \Illuminate\Database\Eloquent\Builder
+    {
+        return LoanRequest::query()
+            ->when($request->query('product_type'), fn ($q, $t) => $q->where('product_type', $t))
+            ->when($request->query('membership_id'), fn ($q, $id) => $q->where('membership_id', $id))
+            ->when($request->query('user_id'), fn ($q, $id) => $q->where('user_id', $id))
+            ->when($request->query('campaign_id'), fn ($q, $id) => $q->where('campaign_id', $id))
+            ->when($request->query('search'), fn ($q, $s) =>
+                $q->whereHas('user', fn ($u) =>
+                    $u->where('full_name', 'ilike', "%{$s}%")->orWhere('phone', 'ilike', "%{$s}%")
+                )
+            );
     }
 
     public function showRequest(LoanRequest $loanRequest): JsonResponse
@@ -70,12 +100,16 @@ class AdminLoanController extends Controller
         $membership = isset($data['membership_id'])
             ? Membership::findOrFail($data['membership_id'])
             : null;
+        $user = isset($data['user_id'])
+            ? \App\Modules\Identity\Infrastructure\Models\User::findOrFail($data['user_id'])
+            : null;
 
         $loanRequest = $this->service->createRequest(
             [
                 'membership'         => $membership,
+                'user'               => $user,
+                'idempotency_key'    => $data['idempotency_key'] ?? null,
                 'product_type'       => LoanProductType::from($data['product_type']),
-                'campaign_id'        => $data['campaign_id'] ?? null,
                 'amount_minor'       => (int) $data['amount_minor'],
                 'purpose'            => $data['purpose'] ?? null,
                 'interest_rate_bps'  => $data['interest_rate_bps'] ?? null,
@@ -92,10 +126,14 @@ class AdminLoanController extends Controller
 
     public function approve(Request $request, LoanRequest $loanRequest): JsonResponse
     {
-        $this->service->approve($loanRequest, $request->user()->id);
+        $approved = $this->service->approve($loanRequest, $request->user()->id);
 
+        // D1 : un dépassement du disponible (R-SAV-01) n'est pas bloquant mais reste tracé.
         $this->audit->logFromRequest($request, 'loan_request.approve', 'loan_request', $loanRequest->id,
-            ['status' => 'pending'], ['status' => $loanRequest->fresh()->status?->value]);
+            ['status' => 'pending'], array_filter([
+                'status'                  => $approved->status?->value,
+                'exceeds_available_minor' => $approved->eligibility_snapshot['exceeds_available_minor'] ?? 0,
+            ]));
 
         return ApiResponse::success(new LoanRequestResource($loanRequest->fresh(['membership.user', 'membership.campaign', 'decidedBy'])));
     }
@@ -140,7 +178,11 @@ class AdminLoanController extends Controller
         );
 
         $this->audit->logFromRequest($request, 'loan.disburse', 'loan', $loan->id,
-            [], ['amount_minor' => $loan->principal_minor, 'channel' => $data['channel']]);
+            [], array_filter([
+                'amount_minor'            => $loan->principal_minor,
+                'channel'                 => $data['channel'],
+                'exceeds_available_minor' => $loanRequest->fresh()->eligibility_snapshot['exceeds_available_minor'] ?? 0,
+            ]));
 
         return ApiResponse::created(new LoanResource($loan->load(['membership.user', 'membership.campaign'])));
     }
@@ -157,13 +199,14 @@ class AdminLoanController extends Controller
 
     public function indexLoans(Request $request): JsonResponse
     {
-        $loans = Loan::with(['membership.user', 'membership.campaign', 'campaign'])
+        $loans = Loan::with(['user', 'membership.user', 'membership.campaign', 'campaign'])
             ->when($request->query('status'), fn ($q, $s) => $q->where('status', $s))
             ->when($request->query('product_type'), fn ($q, $t) => $q->where('product_type', $t))
             ->when($request->query('membership_id'), fn ($q, $id) => $q->where('membership_id', $id))
+            ->when($request->query('user_id'), fn ($q, $id) => $q->where('user_id', $id))
             ->when($request->query('campaign_id'), fn ($q, $id) => $q->where('campaign_id', $id))
             ->when($request->query('search'), fn ($q, $s) =>
-                $q->whereHas('membership.user', fn ($u) =>
+                $q->whereHas('user', fn ($u) =>
                     $u->where('full_name', 'ilike', "%{$s}%")->orWhere('phone', 'ilike', "%{$s}%")
                 )
             )
@@ -198,7 +241,7 @@ class AdminLoanController extends Controller
     public function waiveScheduleItem(Request $request, Loan $loan, LoanRepaymentSchedule $item): JsonResponse
     {
         if ($item->loan_id !== $loan->id) {
-            return ApiResponse::error('mismatch', 'Item does not belong to loan', 400);
+            return ApiResponse::error('mismatch', 'Cette échéance n\'appartient pas à ce prêt.', 400);
         }
         $data = $request->validate([
             'reason' => ['required', 'string', 'min:10', 'max:500'],
@@ -221,7 +264,8 @@ class AdminLoanController extends Controller
         $data = $request->validate([
             'amount_minor' => ['required', 'integer', 'min:1'],
             'channel'      => ['required', 'string', 'in:cash,mtn,orange,moov,wave'],
-            'notes'        => ['nullable', 'string', 'max:500'],
+            'notes'           => ['nullable', 'string', 'max:500'],
+            'idempotency_key' => ['nullable', 'string', 'min:8', 'max:100'],
         ]);
 
         $repayment = $this->service->recordRepayment(
@@ -230,7 +274,14 @@ class AdminLoanController extends Controller
             $data['channel'],
             $data['notes'] ?? null,
             $request->user()->id,
+            $data['idempotency_key'] ?? null,
         );
+
+        $this->audit->logFromRequest($request, 'loan.repayment', 'loan', $loan->id, [], [
+            'repayment_id' => $repayment->id,
+            'amount_minor' => $repayment->amount_minor,
+            'channel'      => $data['channel'],
+        ]);
 
         return ApiResponse::created([
             'repayment'    => [
@@ -239,6 +290,7 @@ class AdminLoanController extends Controller
             ],
             'loan_status'       => $loan->fresh()->status?->value,
             'outstanding_minor' => $loan->fresh()->outstanding_minor,
+            'total_due_minor'   => $loan->fresh()->totalDueMinor(),
         ]);
     }
 

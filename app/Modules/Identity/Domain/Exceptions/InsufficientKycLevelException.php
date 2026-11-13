@@ -7,7 +7,7 @@ class InsufficientKycLevelException extends BusinessException
     public function __construct(int $required, int $actual)
     {
         parent::__construct(
-            "KYC level {$required} required, current level is {$actual}.",
+            "Niveau KYC {$required} requis (niveau actuel : {$actual}).",
             'insufficient_kyc_level',
             403,
         );

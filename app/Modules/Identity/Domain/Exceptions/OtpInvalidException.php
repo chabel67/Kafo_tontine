@@ -6,6 +6,6 @@ class OtpInvalidException extends BusinessException
 {
     public function __construct()
     {
-        parent::__construct('The OTP code is invalid or has already been used.', 'otp_invalid', 401);
+        parent::__construct('Le code OTP est invalide ou a déjà été utilisé.', 'otp_invalid', 401);
     }
 }

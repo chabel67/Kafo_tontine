@@ -14,7 +14,7 @@ class LoanRepayment extends Model
     protected $table = 'loan_repayments';
 
     protected $fillable = [
-        'loan_id', 'amount_minor', 'channel', 'notes', 'recorded_by',
+        'loan_id', 'idempotency_key', 'amount_minor', 'channel', 'campaign_payout_id', 'notes', 'recorded_by',
     ];
 
     protected $casts = [

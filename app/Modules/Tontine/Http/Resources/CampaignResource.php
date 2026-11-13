@@ -31,12 +31,19 @@ class CampaignResource extends JsonResource
             'min_trust_score'               => $this->min_trust_score,
             'maker_checker_threshold_minor' => $this->maker_checker_threshold_minor,
             'max_members'                   => $this->max_members,
+            'allow_early_withdrawals'       => (bool) $this->allow_early_withdrawals,
+            'membership_fee_minor'          => (int) $this->membership_fee_minor,
             'member_count'                  => $memberCount,
             'market_calendar'               => $this->whenLoaded('marketCalendar', fn () => [
                 'id'           => $this->marketCalendar->id,
                 'name'         => $this->marketCalendar->name,
                 'cadence_type' => $this->marketCalendar->cadence_type?->value,
             ]),
+            // Fiche campagne uniquement (GET /admin/campaigns/{id}) — voir CampaignFinancialsService.
+            'financials'   => $this->when(
+                $this->resource->getAttribute('financials') !== null,
+                fn () => $this->resource->getAttribute('financials'),
+            ),
             'opened_at'    => $this->opened_at?->toIso8601String(),
             'activated_at' => $this->activated_at?->toIso8601String(),
             'closed_at'    => $this->closed_at?->toIso8601String(),

@@ -28,8 +28,11 @@ class CreateLoanRequestRequest extends FormRequest
     {
         return [
             'product_type'       => ['required', Rule::in(array_column(LoanProductType::cases(), 'value'))],
-            'membership_id'      => ['required', 'uuid', 'exists:memberships,id'],
-            'campaign_id'        => ['nullable', 'uuid', 'exists:tontine_campaigns,id'],
+            // Avance : rattachée à une adhésion. Prêt communautaire : rattaché au membre (R-LOAN-16) ;
+            // `membership_id` reste accepté pour compatibilité (le membre en est déduit).
+            'membership_id'      => ['required_if:product_type,advance', 'nullable', 'uuid', 'exists:memberships,id'],
+            'user_id'            => ['required_without:membership_id', 'nullable', 'uuid', 'exists:users,id'],
+            'idempotency_key'    => ['nullable', 'string', 'min:8', 'max:100'],
             'amount_minor'       => ['required', 'integer', 'min:1'],
             'purpose'            => ['nullable', 'string', 'max:500'],
             'interest_rate_bps'  => ['nullable', 'integer', 'min:0', 'max:100000'],

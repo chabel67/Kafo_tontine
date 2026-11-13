@@ -9,7 +9,7 @@ class CampaignAlreadyClosedException extends BusinessException
     public function __construct(string $campaignId)
     {
         parent::__construct(
-            "Campaign {$campaignId} is already closed or cannot be closed from its current state.",
+            "La campagne {$campaignId} est déjà clôturée ou ne peut pas l'être depuis son état actuel.",
             'campaign_already_closed',
             409,
         );

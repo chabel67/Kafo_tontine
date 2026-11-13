@@ -7,7 +7,7 @@ class PinLockedException extends BusinessException
     public function __construct(public readonly int $lockSeconds = 60)
     {
         parent::__construct(
-            "Account temporarily locked after too many failed attempts. Try again in {$lockSeconds} seconds.",
+            "Compte temporairement bloqué après trop de tentatives. Réessayez dans {$lockSeconds} secondes.",
             'pin_locked',
             423,
         );

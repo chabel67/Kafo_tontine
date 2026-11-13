@@ -18,6 +18,9 @@ class InstallmentResource extends JsonResource
             'status'                 => $this->status?->value,
             'paid_at'                => $this->paid_at?->toIso8601String(),
             'late_marked_at'         => $this->late_marked_at?->toIso8601String(),
+            // Additif : paiements partiels (présents si la requête a chargé withPaidMinor)
+            'paid_minor'             => $this->when($this->paid_minor !== null, fn () => (int) $this->paid_minor),
+            'remaining_minor'        => $this->when($this->paid_minor !== null, fn () => $this->remainingMinor()),
         ];
     }
 }

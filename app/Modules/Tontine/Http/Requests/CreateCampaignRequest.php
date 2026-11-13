@@ -41,6 +41,10 @@ class CreateCampaignRequest extends FormRequest
             'min_trust_score'               => ['sometimes', 'integer', 'min:0', 'max:100'],
             'maker_checker_threshold_minor' => ['sometimes', 'integer', 'min:0'],
             'max_members'                   => ['nullable', 'integer', 'min:1'],
+            // R-WDR-08 : retraits anticipés autorisés (par défaut oui).
+            'allow_early_withdrawals'       => ['sometimes', 'boolean'],
+            // R-FEE-01 : frais d'adhésion (0 = aucun), distincts des cotisations et de l'épargne.
+            'membership_fee_minor'          => ['sometimes', 'integer', 'min:0', 'max:100000000'],
         ];
     }
 

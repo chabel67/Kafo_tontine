@@ -73,7 +73,7 @@ class MemberLoanController extends Controller
     public function loanSchedule(Request $request, string $loanId): JsonResponse
     {
         $loan = Loan::where('id', $loanId)
-            ->whereHas('membership', fn ($q) => $q->where('user_id', $request->user()->id))
+            ->where('user_id', $request->user()->id)
             ->firstOrFail();
 
         return ApiResponse::success(
@@ -83,9 +83,8 @@ class MemberLoanController extends Controller
 
     public function myLoans(Request $request): JsonResponse
     {
-        $membershipIds = Membership::where('user_id', $request->user()->id)->pluck('id');
-
-        $loans = Loan::whereIn('membership_id', $membershipIds)
+        // R-LOAN-16 : avances ET prêts communautaires (sans adhésion) de l'emprunteur.
+        $loans = Loan::where('user_id', $request->user()->id)
             ->with(['membership.campaign', 'repayments'])
             ->orderByDesc('created_at')
             ->get()
@@ -93,12 +92,15 @@ class MemberLoanController extends Controller
                 'id'                => $loan->id,
                 'reference'         => $loan->reference,
                 'principal_minor'   => $loan->principal_minor,
+                'product_type'      => $loan->product_type->value,
+                'product_type_label'=> $loan->product_type->label(),
                 'outstanding_minor' => $loan->outstanding_minor,
+                'total_due_minor'   => $loan->totalDueMinor(),
                 'repaid_minor'      => $loan->principal_minor - $loan->outstanding_minor,
                 'status'            => $loan->status->value,
                 'disbursed_at'      => $loan->disbursed_at?->toDateString(),
                 'disbursed_channel' => $loan->disbursed_channel,
-                'campaign_name'     => $loan->membership?->campaign?->name ?? '—',
+                'campaign_name'     => $loan->membership?->campaign?->name ?? 'Prêt communautaire',
                 'repayments'        => $loan->repayments
                     ->sortByDesc('created_at')
                     ->map(fn ($r) => [
@@ -114,9 +116,7 @@ class MemberLoanController extends Controller
 
     public function myRequests(Request $request): JsonResponse
     {
-        $membershipIds = Membership::where('user_id', $request->user()->id)->pluck('id');
-
-        $requests = LoanRequest::whereIn('membership_id', $membershipIds)
+        $requests = LoanRequest::where('user_id', $request->user()->id)
             ->with('membership.campaign')
             ->orderBy('created_at', 'desc')
             ->get()
@@ -126,7 +126,8 @@ class MemberLoanController extends Controller
                 'status_label' => $lr->status->label(),
                 'amount_minor' => $lr->amount_minor,
                 'purpose'      => $lr->purpose,
-                'campaign'     => $lr->membership->campaign->name ?? '—',
+                'campaign'     => $lr->membership?->campaign?->name ?? 'Prêt communautaire',
+                'product_type' => $lr->product_type->value,
                 'created_at'   => $lr->created_at->toDateString(),
                 'decided_at'   => $lr->decided_at?->toDateString(),
             ]);

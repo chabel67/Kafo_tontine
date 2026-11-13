@@ -17,6 +17,11 @@ class LedgerAccountResource extends JsonResource
             'type_label'  => $this->type?->label(),
             'owner_id'    => $this->owner_id,
             'description' => $this->description,
+            // Libellé humain (« Caisse espèces », « Épargne — Nom · Campagne »…) — posé par le contrôleur.
+            'account_label' => $this->when(
+                $this->resource->getAttribute('account_label') !== null,
+                fn () => $this->resource->getAttribute('account_label'),
+            ),
             'balance_minor' => $this->when(
                 isset($this->balance_minor),
                 fn () => $this->balance_minor,

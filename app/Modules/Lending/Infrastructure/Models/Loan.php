@@ -20,7 +20,7 @@ class Loan extends Model
     protected $table = 'loans';
 
     protected $fillable = [
-        'reference', 'loan_request_id', 'membership_id',
+        'reference', 'loan_request_id', 'membership_id', 'user_id',
         'product_type', 'campaign_id',
         'principal_minor', 'outstanding_minor', 'status',
         'interest_rate_bps', 'interest_total_minor',
@@ -47,9 +47,45 @@ class Loan extends Model
         'written_off_at'       => 'datetime',
     ];
 
+    /** L'emprunteur est toujours renseigné : déduit de l'adhésion quand il n'est pas fourni (R-LOAN-16). */
+    protected static function booted(): void
+    {
+        static::creating(function (self $model) {
+            if (! $model->user_id && $model->membership_id) {
+                $model->user_id = Membership::whereKey($model->membership_id)->value('user_id');
+            }
+        });
+    }
+
     public function membership(): BelongsTo
     {
         return $this->belongsTo(Membership::class);
+    }
+
+    public function user(): BelongsTo
+    {
+        return $this->belongsTo(User::class);
+    }
+
+    /**
+     * Reste dû total = principal restant + intérêts non encore payés (prêt standard).
+     * `outstanding_minor` ne porte que le principal (R-LOAN-14 : intérêts payés d'abord).
+     */
+    public function totalDueMinor(): int
+    {
+        if ($this->status !== LoanStatus::Active) {
+            return 0;
+        }
+        if ((int) $this->interest_total_minor <= 0) {
+            return (int) $this->outstanding_minor;
+        }
+
+        $unpaidInterest = (int) $this->schedules()
+            ->whereIn('status', ['pending', 'late'])
+            ->get()
+            ->sum(fn ($i) => max(0, $i->interest_minor - min($i->paid_minor, $i->interest_minor)));
+
+        return (int) $this->outstanding_minor + $unpaidInterest;
     }
 
     public function campaign(): BelongsTo

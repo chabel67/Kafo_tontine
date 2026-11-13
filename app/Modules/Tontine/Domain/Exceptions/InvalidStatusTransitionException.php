@@ -9,7 +9,7 @@ class InvalidStatusTransitionException extends BusinessException
     public function __construct(string $from, string $to)
     {
         parent::__construct(
-            "Cannot transition campaign from '{$from}' to '{$to}'.",
+            "Transition de campagne impossible : '{$from}' → '{$to}'.",
             'invalid_status_transition',
             422,
         );

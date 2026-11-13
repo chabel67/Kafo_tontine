@@ -15,6 +15,8 @@ enum AccountType: string
     // Opérations manuelles staff (R-LEDGER-09/10) — charges & recettes hors flows métier.
     case OperationalExpense  = 'OPERATIONAL_EXPENSE';
     case MiscRevenue         = 'MISC_REVENUE';
+    // Frais d'adhésion à une campagne (R-FEE-02) — produit, jamais de l'épargne membre.
+    case FeeIncome           = 'FEE_INCOME';
 
     public function label(): string
     {
@@ -29,7 +31,17 @@ enum AccountType: string
             self::ExpenseLoss        => 'Pertes (write-off)',
             self::OperationalExpense => 'Dépenses opérationnelles',
             self::MiscRevenue        => 'Recettes diverses',
+            self::FeeIncome          => 'Frais d\'adhésion',
         };
+    }
+
+    /**
+     * Comptes à solde débiteur (actifs ET charges) : solde = débits − crédits.
+     * Les charges (pertes, dépenses) s'affichaient en négatif quand seul isAsset() était utilisé.
+     */
+    public function isDebitNormal(): bool
+    {
+        return $this->isAsset() || in_array($this, [self::ExpenseLoss, self::OperationalExpense], true);
     }
 
     /** Comptes d'actif : solde = débits - crédits */

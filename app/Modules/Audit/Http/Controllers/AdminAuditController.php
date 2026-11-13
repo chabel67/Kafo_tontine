@@ -2,6 +2,7 @@
 
 namespace App\Modules\Audit\Http\Controllers;
 
+use App\Modules\Audit\Application\AuditEntityLabeler;
 use App\Modules\Audit\Infrastructure\Models\AuditLog;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -11,6 +12,9 @@ use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class AdminAuditController extends Controller
 {
+    /** Actions dont l'auteur est l'entité `user` elle-même. */
+    private const SELF_AUTHORED_ACTIONS = ['auth.login_success', 'auth.staff_pin_set'];
+
     public function index(Request $request): JsonResponse
     {
         $query = AuditLog::query()->orderBy('created_at', 'desc');
@@ -47,7 +51,7 @@ class AdminAuditController extends Controller
         $logs = $query->paginate($perPage);
 
         return response()->json([
-            'data' => $logs->items(),
+            'data' => $this->withLabels($logs->items()),
             'meta' => [
                 'current_page' => $logs->currentPage(),
                 'last_page'    => $logs->lastPage(),
@@ -61,7 +65,37 @@ class AdminAuditController extends Controller
     {
         $log = AuditLog::findOrFail($id);
 
-        return response()->json(['data' => $log]);
+        return response()->json(['data' => $this->withLabels([$log])[0]]);
+    }
+
+    /**
+     * Additif (lot A-bis) : `entity_label`, libellé lisible de l'entité fourni par son module
+     * (AuditEntityLabeler, DA-09) ; null si type inconnu ou entité disparue.
+     *
+     * `user_name` : les connexions et créations de PIN staff antérieures au lot A-bis ont été
+     * journalisées sans auteur (aucun jeton au moment de l'action). Pour ces deux actions,
+     * l'auteur est l'entité elle-même : son nom est repris à la lecture. Les nouvelles
+     * entrées portent `user_id` / `user_name` dès l'écriture.
+     *
+     * @param  array<int, AuditLog>  $logs
+     * @return array<int, array<string, mixed>>
+     */
+    private function withLabels(array $logs): array
+    {
+        $labels = app(AuditEntityLabeler::class)->labelsFor($logs);
+
+        return array_map(function (AuditLog $log) use ($labels) {
+            $row   = $log->toArray();
+            $label = $labels[$log->entity_type][$log->entity_id] ?? null;
+            $row['entity_label'] = $label;
+
+            if ($row['user_name'] === null && $log->entity_type === 'user' && $label !== null
+                && in_array($log->action, self::SELF_AUTHORED_ACTIONS, true)) {
+                $row['user_name'] = $label;
+            }
+
+            return $row;
+        }, $logs);
     }
 
     public function export(Request $request): StreamedResponse

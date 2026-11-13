@@ -6,6 +6,6 @@ class OtpExpiredException extends BusinessException
 {
     public function __construct()
     {
-        parent::__construct('The OTP code has expired.', 'otp_expired', 401);
+        parent::__construct('Le code OTP a expiré ou n\'existe pas. Demandez un nouveau code.', 'otp_expired', 401);
     }
 }

@@ -27,7 +27,7 @@ enum EarlyWithdrawalStatus: string
 
     private const TRANSITIONS = [
         'pending'           => ['under_review', 'info_requested', 'approved', 'rejected', 'cancelled'],
-        'under_review'      => ['info_requested', 'approved', 'rejected'],
+        'under_review'      => ['info_requested', 'approved', 'rejected', 'cancelled'],
         'info_requested'    => ['under_review', 'rejected', 'cancelled'],
         'approved'          => ['payout_processing', 'rejected'],
         'payout_processing' => ['disbursed', 'payout_failed'],
@@ -63,6 +63,15 @@ enum EarlyWithdrawalStatus: string
         return [
             self::Pending->value, self::UnderReview->value, self::InfoRequested->value,
             self::Approved->value, self::PayoutProcessing->value, self::PayoutFailed->value,
+        ];
+    }
+
+    /** Statuts rejetés automatiquement à la clôture de la campagne (D2, R-CAMP-15). */
+    public static function rejectedOnClosure(): array
+    {
+        return [
+            self::Pending->value, self::UnderReview->value, self::InfoRequested->value,
+            self::Approved->value, self::PayoutFailed->value,
         ];
     }
 

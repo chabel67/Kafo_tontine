@@ -2,6 +2,12 @@
 
 use Illuminate\Support\Str;
 
+// PHP 8.4+ : PDO::MYSQL_ATTR_SSL_CA est déprécié (8.5) au profit de Pdo\Mysql::ATTR_SSL_CA.
+// constant() évite toute référence directe à la constante dépréciée sur les versions récentes.
+$mysqlSslCa = defined('Pdo\Mysql::ATTR_SSL_CA')
+    ? constant('Pdo\Mysql::ATTR_SSL_CA')
+    : (defined('PDO::MYSQL_ATTR_SSL_CA') ? constant('PDO::MYSQL_ATTR_SSL_CA') : 1012);
+
 return [
 
     /*
@@ -58,7 +64,7 @@ return [
             'strict' => true,
             'engine' => null,
             'options' => extension_loaded('pdo_mysql') ? array_filter([
-                PDO::MYSQL_ATTR_SSL_CA => env('MYSQL_ATTR_SSL_CA'),
+                $mysqlSslCa => env('MYSQL_ATTR_SSL_CA'),
             ]) : [],
         ],
 
@@ -78,7 +84,7 @@ return [
             'strict' => true,
             'engine' => null,
             'options' => extension_loaded('pdo_mysql') ? array_filter([
-                PDO::MYSQL_ATTR_SSL_CA => env('MYSQL_ATTR_SSL_CA'),
+                $mysqlSslCa => env('MYSQL_ATTR_SSL_CA'),
             ]) : [],
         ],
 
@@ -95,6 +101,10 @@ return [
             'prefix_indexes' => true,
             'search_path' => 'public',
             'sslmode' => 'prefer',
+            // Session PostgreSQL en UTC, comme APP_TIMEZONE : les valeurs par défaut
+            // CURRENT_TIMESTAMP (ledger, audit_logs, member_notes…) sont ainsi stockées
+            // en UTC quel que soit le fuseau du serveur (Africa/Porto-Novo en local).
+            'timezone' => env('DB_TIMEZONE', 'UTC'),
         ],
 
         'sqlsrv' => [

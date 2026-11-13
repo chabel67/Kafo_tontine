@@ -2,6 +2,7 @@
 
 namespace App\Modules\Tontine\Application;
 
+use App\Shared\BusinessTime;
 use App\Modules\Identity\Infrastructure\Models\User;
 use App\Modules\Ledger\Application\LedgerService;
 use App\Modules\Lending\Domain\Enums\LoanStatus;
@@ -43,12 +44,12 @@ class MemberOverviewService
             ->where('status', '!=', InstallmentStatus::Waived->value)
             ->selectRaw("membership_id,
                 COUNT(*)                                                      as total,
-                COUNT(*) FILTER (WHERE due_date <= CURRENT_DATE)              as due,
+                COUNT(*) FILTER (WHERE due_date <= ?)                         as due,
                 COUNT(*) FILTER (WHERE status = 'paid')                       as paid,
                 COUNT(*) FILTER (WHERE status = 'late')                       as late,
                 COALESCE(SUM(amount_minor), 0)                                as expected_minor,
                 MIN(due_date)                                                 as first_due,
-                MAX(due_date)                                                 as last_due")
+                MAX(due_date)                                                 as last_due", [BusinessTime::todayDate()])
             ->groupBy('membership_id')
             ->get()
             ->keyBy('membership_id');
@@ -67,7 +68,8 @@ class MemberOverviewService
 
         $balances = $this->ledger->balances(array_map(fn ($id) => "MEMBER_SAVINGS:{$id}", $ids));
 
-        $loans = Loan::whereIn('membership_id', $ids)
+        // R-LOAN-16 : avances et prêts communautaires de l'emprunteur (avec ou sans adhésion).
+        $loans = Loan::where('user_id', $user->id)
             ->where('status', LoanStatus::Active->value)
             ->selectRaw('COUNT(*) as count, COALESCE(SUM(principal_minor), 0) as principal, COALESCE(SUM(outstanding_minor), 0) as outstanding')
             ->first();

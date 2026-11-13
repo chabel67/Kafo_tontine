@@ -15,6 +15,8 @@ class MembershipResource extends JsonResource
             'status'                  => $this->status?->value,
             'status_label'            => $this->status?->label(),
             'committed_amount_minor'  => $this->committed_amount_minor,
+            // R-FEE-02 : frais d'adhésion dus / payés / restant (jamais de l'épargne).
+            'membership_fee'          => \App\Modules\Tontine\Application\MembershipService::feeStatus($this->resource),
             'user'             => $this->whenLoaded('user', fn () => new UserResource($this->user)),
             'campaign'         => $this->whenLoaded('campaign', fn () => [
                 'id'   => $this->campaign->id,

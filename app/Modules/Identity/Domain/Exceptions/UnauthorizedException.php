@@ -7,8 +7,8 @@ class UnauthorizedException extends BusinessException
     public function __construct(string $permission = '')
     {
         $msg = $permission
-            ? "You do not have the '{$permission}' permission."
-            : 'You are not authorized to perform this action.';
+            ? "Vous n'avez pas la permission « {$permission} »."
+            : 'Vous n\'êtes pas autorisé à effectuer cette action.';
 
         parent::__construct($msg, 'unauthorized', 403);
     }

@@ -2,9 +2,11 @@
 
 namespace App\Modules\Lending\Application;
 
+use App\Shared\BusinessTime;
 use App\Modules\Ledger\Application\LedgerService;
 use App\Modules\Lending\Domain\Enums\LoanProductType;
 use App\Modules\Lending\Infrastructure\Models\Loan;
+use App\Modules\Tontine\Application\SavingsAvailabilityService;
 use App\Modules\Tontine\Domain\Enums\MembershipStatus;
 use App\Modules\Tontine\Infrastructure\Models\Installment;
 use App\Modules\Tontine\Infrastructure\Models\Membership;
@@ -21,40 +23,56 @@ class EligibilityService
     public function __construct(private readonly LedgerService $ledger) {}
 
     /**
-     * Snapshot informatif — ne bloque JAMAIS l'octroi (R-LOAN-11).
+     * Snapshot informatif — ne bloque JAMAIS l'octroi (R-LOAN-11, décision D1).
      * La décision reste discrétionnaire du staff.
      *
-     * `eligible=true` toujours. Les autres clés (savings, trust, coefficient)
-     * restent posées à titre d'aide à la décision.
+     * Avance : détail R-SAV-01 (épargne, réservations, disponible), plafond indicatif
+     * (disponible × coefficient) et dépassement éventuel du disponible par le montant demandé.
      */
-    public function snapshotFor(?Membership $membership, LoanProductType $type): array
-    {
-        if ($membership === null) {
+    public function snapshotFor(
+        ?Membership $membership,
+        LoanProductType $type,
+        ?int $requestedAmountMinor = null,
+        ?string $excludeLoanRequestId = null,
+    ): array {
+        if ($membership === null || $type === LoanProductType::Standard) {
+            // Prêt communautaire : indépendant de l'épargne d'une campagne (R-LOAN-16).
             return [
                 'eligible'          => true,
                 'product_type'      => $type->value,
                 'reasons'           => [],
-                'trust_score'       => null,
+                'trust_score'       => $membership ? $this->computeTrustScore($membership) : null,
                 'coefficient'       => null,
                 'savings_minor'     => 0,
+                'available_minor'   => null,
                 'max_amount_minor'  => null,
+                'exceeds_available_minor' => 0,
                 'checked_at'        => now()->toIso8601String(),
             ];
         }
 
         $trustScore  = $this->computeTrustScore($membership);
         $coefficient = $this->scoreToCoefficient($trustScore);
-        $savings     = $this->ledger->balance("MEMBER_SAVINGS:{$membership->id}");
+        // R-SAV-01 : l'épargne déjà réservée (retraits, autres avances) n'est plus disponible.
+        $sav         = app(SavingsAvailabilityService::class)->breakdown($membership, null, $excludeLoanRequestId);
+        $available   = $sav['available_minor'];
 
         return [
-            'eligible'         => true,
-            'product_type'     => $type->value,
-            'reasons'          => [],
-            'trust_score'      => $trustScore,
-            'coefficient'      => $coefficient,
-            'savings_minor'    => $savings,
-            'max_amount_minor' => (int) floor($savings * $coefficient),
-            'checked_at'       => now()->toIso8601String(),
+            'eligible'                    => true,
+            'product_type'                => $type->value,
+            'reasons'                     => [],
+            'trust_score'                 => $trustScore,
+            'coefficient'                 => $coefficient,
+            'savings_minor'               => $sav['savings_minor'],
+            'committed_withdrawals_minor' => $sav['committed_minor'],
+            'advances_outstanding_minor'  => $sav['advances_outstanding_minor'],
+            'advance_requests_minor'      => $sav['advance_requests_minor'],
+            'available_minor'             => $available,
+            // Plafond indicatif : coefficient appliqué à l'épargne réellement disponible.
+            'max_amount_minor'            => (int) floor($available * $coefficient),
+            // D1 : jamais bloquant — signalé au staff (écran d'examen + audit).
+            'exceeds_available_minor'     => $requestedAmountMinor !== null ? max(0, $requestedAmountMinor - $available) : 0,
+            'checked_at'                  => now()->toIso8601String(),
         ];
     }
 
@@ -122,7 +140,7 @@ class EligibilityService
     private function computeTrustScore(Membership $membership): int
     {
         $totalDue    = Installment::where('membership_id', $membership->id)
-            ->where('due_date', '<=', now())
+            ->where('due_date', '<=', BusinessTime::todayDate())
             ->count();
 
         if ($totalDue === 0) {

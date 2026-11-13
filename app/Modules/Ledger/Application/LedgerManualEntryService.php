@@ -94,7 +94,7 @@ class LedgerManualEntryService
     {
         return $channel === 'cash'
             ? ['CASH_BOX', AccountType::CashBox]
-            : ['MOMO_FLOAT:' . strtolower($channel), AccountType::MomoFloat];
+            : [\App\Modules\Ledger\Domain\ValueObjects\TreasuryAccount::key($channel), AccountType::MomoFloat];
     }
 
     private function buildDescription(string $direction, ManualEntryCategory $category, ?string $notes): string

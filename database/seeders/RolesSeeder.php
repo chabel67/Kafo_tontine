@@ -27,8 +27,10 @@ class RolesSeeder extends Seeder
                     'payment.view', 'payment.confirm', 'payment.validate',
                     'cash.validate',
                     'loan.view',
+                    'campaign.view', 'campaign.close',
                     'treasury.view',
                     'withdrawal.view', 'withdrawal.review',
+                    'reporting.view',
                 ]),
             ],
             [
@@ -60,6 +62,7 @@ class RolesSeeder extends Seeder
                     'loan.view', 'loan.review', 'loan.approve',
                     'loan.reject', 'loan.countersign', 'loan.disburse',
                     'campaign.view', 'campaign.manage', 'campaign.create',
+                    'campaign.close',
                     'market_calendar.manage',
                     'treasury.view', 'treasury.reconcile',
                     'ledger.manual_entry',
@@ -74,7 +77,8 @@ class RolesSeeder extends Seeder
                 'label'       => 'Super Administrateur',
                 // Wildcard `*` couvre TOUTES les permissions, y compris celles
                 // réservées explicitement au super-admin (loan.writeoff,
-                // ledger.reverse, campaign.transition).
+                // ledger.reverse, campaign.transition). La clôture seule
+                // (`campaign.close`) est aussi ouverte à l'admin et au trésorier.
                 'permissions' => json_encode(['*']),
             ],
         ];

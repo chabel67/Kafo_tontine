@@ -99,7 +99,7 @@ class LedgerService
         $credits = LedgerEntry::where('account_key', $accountKey)->where('entry_type', 'credit')->sum('amount_minor');
         $debits  = LedgerEntry::where('account_key', $accountKey)->where('entry_type', 'debit')->sum('amount_minor');
 
-        return $account->type->isAsset()
+        return $account->type->isDebitNormal()
             ? (int)($debits - $credits)
             : (int)($credits - $debits);
     }
@@ -129,7 +129,7 @@ class LedgerService
 
         foreach ($sums as $row) {
             $type = $types[$row->account_key] ?? null;
-            $result[$row->account_key] = $type?->isAsset()
+            $result[$row->account_key] = $type?->isDebitNormal()
                 ? (int) ($row->debits - $row->credits)
                 : (int) ($row->credits - $row->debits);
         }
@@ -142,9 +142,7 @@ class LedgerService
      */
     public function nextReference(): string
     {
-        $year  = now()->year;
-        $count = LedgerTransaction::whereYear('created_at', $year)->count() + 1;
-        return sprintf('TXN-%d-%06d', $year, $count);
+        return \App\Shared\Reference::next('TXN', \App\Shared\Reference::TXN);
     }
 
     /**
@@ -155,6 +153,10 @@ class LedgerService
         string $description,
         ?string $createdById = null,
     ): LedgerTransaction {
+        if (LedgerTransaction::where('reverses_id', $original->id)->exists()) {
+            throw new \App\Modules\Ledger\Domain\Exceptions\TransactionAlreadyReversedException($original->reference);
+        }
+
         $legs = $original->entries->map(fn (LedgerEntry $e) => [
             'account' => $e->account_key,
             'type'    => $e->entry_type === 'debit' ? 'credit' : 'debit',

@@ -17,6 +17,15 @@ class LoanResource extends JsonResource
             'campaign_id'          => $this->campaign_id,
             'principal_minor'      => $this->principal_minor,
             'outstanding_minor'    => $this->outstanding_minor,
+            // Reste dû total (principal + intérêts restants) : borne d'un remboursement.
+            'total_due_minor'      => $this->resource->totalDueMinor(),
+            'user_id'              => $this->user_id,
+            // Emprunteur (toujours renseigné, y compris pour un prêt communautaire sans adhésion).
+            'user'                 => $this->user_id ? [
+                'id'        => $this->user?->id,
+                'full_name' => $this->user?->full_name,
+                'phone'     => $this->user?->phone,
+            ] : null,
             'interest_rate_bps'    => $this->interest_rate_bps,
             'interest_total_minor' => $this->interest_total_minor,
             'periodicity'          => $this->periodicity?->value,

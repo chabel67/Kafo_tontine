@@ -5,7 +5,7 @@ namespace App\Modules\Tontine\Application;
 use App\Modules\Identity\Domain\Exceptions\UnauthorizedException;
 use App\Modules\Identity\Infrastructure\Models\User;
 use App\Modules\Tontine\Domain\Enums\CampaignStatus;
-use App\Modules\Tontine\Domain\Exceptions\ActiveLoansBlockClosureException;
+use App\Modules\Tontine\Domain\Exceptions\TontineRuleException;
 use App\Modules\Tontine\Domain\Exceptions\InvalidStatusTransitionException;
 use App\Modules\Tontine\Infrastructure\Models\Campaign;
 
@@ -29,10 +29,9 @@ class CampaignService
             throw new InvalidStatusTransitionException($campaign->status->value, $newStatus->value);
         }
 
-        // R-CAMP-08 : la clôture est déléguée à CampaignClosureService qui
-        // gère la génération des payouts + l'annulation des demandes pending.
-        // R-CAMP-09 : les avances actives sont compensées via payout, pas
-        // un blocage. Il n'y a plus de check "loans actifs bloquent la clôture".
+        // R-CAMP-08 : la clôture est déléguée à CampaignClosureService (payouts, retraits,
+        // demandes d'avance). R-CAMP-03 est supprimée : un prêt actif ne bloque pas la clôture
+        // (avances compensées au règlement, prêts communautaires indépendants — R-LOAN-16).
         if ($newStatus === CampaignStatus::Closed) {
             app(CampaignClosureService::class)->close($campaign, $actor, $reason);
             return $campaign->fresh();
@@ -52,16 +51,37 @@ class CampaignService
         return $campaign->fresh();
     }
 
+    /** Règles « douces » encore modifiables une fois la campagne ouverte (R-CAMP-02). */
+    private const SOFT_RULES = ['description', 'grace_period_days'];
+
     public function update(Campaign $campaign, array $data): Campaign
     {
-        // R-CAMP-02 : hard rules locked once open
+        // R-CAMP-02 : règles dures verrouillées hors brouillon — refus explicite (plus d'abandon
+        // silencieux). La politique de retrait a son propre endpoint motivé et audité.
         if ($campaign->status !== CampaignStatus::Draft) {
-            $data = array_intersect_key($data, array_flip([
-                'description', 'grace_period_days', 'rules',
-            ]));
+            $locked = array_values(array_diff(array_keys($data), self::SOFT_RULES));
+            $locked = array_values(array_filter($locked, fn ($f) => $campaign->getAttribute($f) != $data[$f]));
+            if ($locked !== []) {
+                throw TontineRuleException::hardRuleLocked($locked);
+            }
         }
 
         $campaign->update($data);
+        return $campaign->fresh();
+    }
+
+    /**
+     * R-WDR-08 : autorise ou suspend les NOUVELLES demandes de retrait anticipé.
+     * Possible tant que la campagne n'est pas clôturée ; motif et audit côté contrôleur.
+     */
+    public function updateWithdrawalPolicy(Campaign $campaign, bool $allow): Campaign
+    {
+        if ($campaign->status === CampaignStatus::Closed) {
+            throw TontineRuleException::campaignNotActive();
+        }
+
+        $campaign->update(['allow_early_withdrawals' => $allow]);
+
         return $campaign->fresh();
     }
 }

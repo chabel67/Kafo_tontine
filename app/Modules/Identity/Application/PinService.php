@@ -4,6 +4,7 @@ namespace App\Modules\Identity\Application;
 
 use App\Modules\Identity\Domain\Exceptions\PinInvalidException;
 use App\Modules\Identity\Domain\Exceptions\PinLockedException;
+use App\Modules\Identity\Domain\Exceptions\PinWeakException;
 use App\Modules\Identity\Infrastructure\Models\User;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Hash;
@@ -13,10 +14,21 @@ class PinService
     public function set(User $user, string $rawPin): void
     {
         if (! $this->isValidPin($rawPin)) {
-            throw new \InvalidArgumentException('PIN must be 6 digits and cannot be a simple sequence or all same digits.');
+            throw new \InvalidArgumentException(PinWeakException::MESSAGE);
         }
 
         $user->update(['pin_hash' => Hash::make($rawPin)]);
+    }
+
+    /**
+     * Contrôle de robustesse à appeler AVANT de consommer un OTP (création de PIN) :
+     * un PIN trop simple ne doit pas « brûler » l'OTP ni produire une erreur 500.
+     */
+    public function assertStrong(string $rawPin): void
+    {
+        if (! $this->isValidPin($rawPin)) {
+            throw new PinWeakException();
+        }
     }
 
     public function verify(User $user, string $rawPin): void

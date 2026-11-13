@@ -25,6 +25,12 @@ enum LoanRequestStatus: string
         };
     }
 
+    /** Statuts non terminaux : la demande réserve encore de l'épargne (R-SAV-01). */
+    public static function open(): array
+    {
+        return [self::Pending->value, self::Approved->value, self::Countersigning->value, self::Countersigned->value];
+    }
+
     public function isDisbursable(): bool
     {
         return in_array($this, [self::Approved, self::Countersigned]);

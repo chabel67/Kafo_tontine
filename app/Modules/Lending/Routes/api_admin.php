@@ -14,6 +14,9 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::prefix('admin/loan-requests')->group(function () {
         Route::get('/',                          [AdminLoanController::class, 'indexRequests'])
             ->middleware('permission:loan.view');
+        // Compteurs par statut (onglets) — déclaré avant /{loanRequest}.
+        Route::get('/counts',                    [AdminLoanController::class, 'requestCounts'])
+            ->middleware('permission:loan.view');
         Route::post('/',                         [AdminLoanController::class, 'createRequest'])
             ->middleware('permission:loan.review');
         Route::get('/{loanRequest}',             [AdminLoanController::class, 'showRequest'])
