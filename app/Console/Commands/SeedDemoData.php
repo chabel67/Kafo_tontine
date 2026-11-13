@@ -66,6 +66,7 @@ class SeedDemoData extends Command
 
     /** Scénarios ajoutés après la première diffusion : chacun a son propre marqueur. */
     private const CLOSED_ROTATION = 'Tontine des vendeuses de Ganhi';
+    private const CLOSED_SAVINGS  = 'Épargne Commerçants de Missèbo';
 
     public function handle(): int
     {
@@ -82,14 +83,15 @@ class SeedDemoData extends Command
         mt_srand(20261114);
         $base   = ! User::where('phone', self::MARKER_PHONE)->exists();
         $closed = ! Campaign::where('name', self::CLOSED_ROTATION)->exists();
-        if (! $base && ! $closed) {
+        $toRenew = ! Campaign::where('name', self::CLOSED_SAVINGS)->exists();
+        if (! $base && ! $closed && ! $toRenew) {
             $this->info('[kafo:seed-demo] Données de démonstration déjà présentes : rien à faire.');
 
             return self::SUCCESS;
         }
 
         try {
-            DB::transaction(function () use ($base, $closed) {
+            DB::transaction(function () use ($base, $closed, $toRenew) {
                 $this->at(-140);
                 $this->createStaff();
                 if ($base) {
@@ -106,6 +108,9 @@ class SeedDemoData extends Command
                 }
                 if ($closed) {
                     $this->closedRotation();
+                }
+                if ($toRenew) {
+                    $this->closedSavingsToRenew();
                 }
             });
         } finally {
@@ -610,6 +615,72 @@ class SeedDemoData extends Command
             $this->at($offset + 1, 10);
             $payouts->initiate($round->fresh(), 'cash', null, (string) Str::uuid(), $this->admin);
             $payouts->confirm($round->fresh(), 'REMISE-GANHI2-' . $round->round_number, $this->admin);
+        }
+    }
+
+    // ── Deux épargnes clôturées et réglées, prêtes à être reconduites en démonstration ──
+
+    private function closedSavingsToRenew(): void
+    {
+        $market = $this->calendar('Marché Dantokpa (5 jours)', 5, 'Cycle de marché de 5 jours — Cotonou');
+        $weekly = $this->calendar('Hebdomadaire (7 jours)', 7, 'Cotisation hebdomadaire');
+
+        // 1. Montant fixe : un membre arrête de cotiser (débiteur), un autre a une avance compensée au règlement.
+        $a = $this->campaign([
+            'name' => self::CLOSED_SAVINGS, 'description' => 'Épargne des commerçants de Missèbo, 3 000 FCFA chaque jour de marché.',
+            'contribution_mode' => 'fixed', 'contribution_amount_minor' => 3000, 'duration_installments' => 12,
+            'first_installment_date' => $this->day(-80), 'market_calendar_id' => $market->id, 'grace_period_days' => 2,
+            'membership_fee_minor' => 500, 'allow_early_withdrawals' => true,
+        ], -92);
+        $this->transition($a, CampaignStatus::Open, -90, 'Ouverture des adhésions.');
+        $ma = [];
+        foreach ($this->pick(12, 10) as $i => $u) {
+            $ma[] = $this->enrollAndValidate($u, $a, -88 + intdiv($i, 4));
+        }
+        $this->transition($a, CampaignStatus::Active, -81, 'Démarrage des cotisations.');
+        foreach ($ma as $i => $m) {
+            $this->contributeUntil($m, -25, $i === 6 ? 7 : 12);
+        }
+        $lending = app(LendingService::class);
+        $this->at(-45, 9);
+        $req = $lending->createRequest(['product_type' => 'advance', 'membership' => $ma[3]->fresh(), 'amount_minor' => 10000,
+            'purpose' => 'Réassort de marchandises'], $ma[3]->user_id);
+        $this->at(-45, 15);
+        $req = $lending->approve($req->fresh(), $this->manager->id);
+        $this->at(-44, 10);
+        $lending->disburse($req->fresh(), $this->admin->id, 'cash', null);
+        $this->closeAndSettle($a, -20);
+
+        // 2. Montant libre : chaque membre a son engagement.
+        $b = $this->campaign([
+            'name' => 'Épargne Coiffeuses d\'Akpakpa', 'description' => 'Montant libre entre 1 000 et 5 000 FCFA par semaine.',
+            'contribution_mode' => 'custom', 'min_contribution_minor' => 1000, 'max_contribution_minor' => 5000,
+            'duration_installments' => 10, 'first_installment_date' => $this->day(-90), 'market_calendar_id' => $weekly->id,
+            'grace_period_days' => 3, 'allow_early_withdrawals' => false,
+        ], -100);
+        $this->transition($b, CampaignStatus::Open, -98, 'Ouverture des adhésions.');
+        $amounts = [2000, 5000, 1500, 3000, 2500, 4000, 1000, 3500];
+        $mb = [];
+        foreach ($this->pick(40, 8) as $i => $u) {
+            $mb[] = $this->enrollAndValidate($u, $b, -96 + intdiv($i, 3), $amounts[$i]);
+        }
+        $this->transition($b, CampaignStatus::Active, -91, 'Démarrage des cotisations.');
+        foreach ($mb as $m) {
+            $this->contributeUntil($m, -27, 10);
+        }
+        $this->closeAndSettle($b, -15);
+    }
+
+    /** Clôture puis règle tous les payouts (espèces ou MoMo) : l'ancien cycle est entièrement réglé. */
+    private function closeAndSettle(Campaign $campaign, int $offset): void
+    {
+        $this->at($offset, 9);
+        app(CampaignClosureService::class)->close($campaign->fresh(), $this->super, 'Fin du cycle d\'épargne.');
+        foreach (CampaignPayout::where('campaign_id', $campaign->id)->get() as $k => $payout) {
+            $this->at($offset + 1 + intdiv($k, 4), 10 + $k % 6);
+            $momo = $k % 3 === 1;
+            app(CampaignPayoutService::class)->settle($payout->fresh(), $momo ? 'mtn' : 'cash',
+                $momo ? $payout->membership->user->phone : null, $this->manager, (string) Str::uuid());
         }
     }
 

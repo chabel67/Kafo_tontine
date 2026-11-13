@@ -23,7 +23,13 @@ class SeedDemoDataTest extends TestCase
         $this->artisan('kafo:seed-demo')->assertSuccessful();
 
         $this->assertGreaterThanOrEqual(48, User::where('phone', 'like', '+22901970%')->count());
-        $this->assertSame(10, Campaign::count());
+        $this->assertSame(12, Campaign::count());
+        foreach (['Épargne Commerçants de Missèbo', 'Épargne Coiffeuses d\'Akpakpa'] as $name) {
+            $c = Campaign::where('name', $name)->sole();
+            $this->assertSame('closed', $c->status->value);
+            $this->assertSame(0, DB::table('campaign_payouts')->where('campaign_id', $c->id)->where('status', 'pending')->count());
+            $this->assertNull($c->nextCycle()->first(), 'prête à être reconduite');
+        }
         $closed = Campaign::where('name', 'Tontine des vendeuses de Ganhi')->sole();
         $this->assertSame('closed', $closed->status->value);
         $this->assertSame('active', Campaign::where('previous_campaign_id', $closed->id)->sole()->status->value);
