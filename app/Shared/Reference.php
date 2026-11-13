@@ -18,6 +18,8 @@ final class Reference
     public const LOAN   = 'ref_loan_seq';
     public const PAYOUT = 'ref_payout_seq';
     public const WDR    = 'ref_wdr_seq';
+    public const RND    = 'ref_rnd_seq';
+    public const RTO    = 'ref_rto_seq';
 
     public static function next(string $prefix, string $sequence): string
     {

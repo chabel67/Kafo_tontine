@@ -13,6 +13,17 @@ class CampaignService
 {
     public function create(array $data, User $creator): Campaign
     {
+        if (($data['campaign_type'] ?? 'savings') === 'rotating') {
+            // Une tontine rotative n'a pas d'épargne individuelle : jamais de retrait anticipé.
+            $data['allow_early_withdrawals'] = false;
+            $data['duration_installments']   = (int) $data['max_members'] * (int) $data['installments_per_round'];
+            $data['first_installment_date']  ??= collect($data['contribution_schedule']['dates'] ?? [])->min();
+            $data['rotation_fee_mode']       ??= 'none';
+            if ($data['rotation_fee_mode'] === 'none') {
+                $data['rotation_fee_minor'] = 0;
+            }
+        }
+
         $campaign = Campaign::create([
             ...$data,
             'created_by' => $creator->id,
@@ -37,6 +48,20 @@ class CampaignService
             return $campaign->fresh();
         }
 
+        // Lot 3 : le démarrage d'une tontine rotative vérifie le groupe et les tours.
+        if ($newStatus === CampaignStatus::Active && $campaign->isRotating()) {
+            return app(RotationAssignmentService::class)->start($campaign, $actor);
+        }
+        // Reconduction (R3) : un cycle ne démarre qu'après le règlement complet du précédent.
+        if ($newStatus === CampaignStatus::Active) {
+            app(CampaignRenewalService::class)->assertPreviousCycleSettled($campaign);
+        }
+
+        // Lot 2 : une tontine rotative n'ouvre ses adhésions qu'avec un calendrier confirmé (figé).
+        if ($newStatus === CampaignStatus::Open && $campaign->isRotating() && ! $campaign->schedule_confirmed_at) {
+            throw new TontineRuleException('Confirmez le calendrier de la tontine avant d\'ouvrir les adhésions.', 'rotation_schedule_not_confirmed', 422);
+        }
+
         $timestamps = match ($newStatus) {
             CampaignStatus::Open   => ['opened_at'    => now()],
             CampaignStatus::Active => ['activated_at' => now()],
@@ -47,6 +72,17 @@ class CampaignService
             'status' => $newStatus->value,
             ...$timestamps,
         ]);
+
+        // Cycle reconduit qui démarre : les membres validés sont prévenus.
+        if ($newStatus === CampaignStatus::Active && $campaign->cycle_number > 1) {
+            $first = \App\Modules\Tontine\Infrastructure\Models\Installment::where('campaign_id', $campaign->id)->min('due_date');
+            foreach ($campaign->memberships()->where('status', 'active')->pluck('user_id') as $userId) {
+                app(\App\Modules\Notifications\Application\NotificationService::class)->notify($userId, 'campaign.cycle_started',
+                    "Le cycle {$campaign->cycle_number} commence",
+                    "« {$campaign->name} » démarre." . ($first ? ' Première cotisation le ' . \Carbon\Carbon::parse($first)->format('d/m/Y') . '.' : ''),
+                    '/campagnes');
+            }
+        }
 
         return $campaign->fresh();
     }
@@ -67,8 +103,21 @@ class CampaignService
         }
 
         $campaign->update($data);
+
+        // Lot 2 : en brouillon, changer un paramètre du calendrier rotatif annule sa confirmation.
+        if ($campaign->isRotating() && $campaign->schedule_confirmed_at
+            && array_intersect(array_keys($data), self::ROTATION_SCHEDULE_FIELDS) !== []) {
+            app(RotationScheduleService::class)->discard($campaign);
+        }
+
         return $campaign->fresh();
     }
+
+    /** Paramètres dont dépend le calendrier confirmé d'une tontine rotative. */
+    private const ROTATION_SCHEDULE_FIELDS = [
+        'max_members', 'installments_per_round', 'contribution_schedule', 'first_installment_date',
+        'contribution_amount_minor', 'rotation_fee_mode', 'rotation_fee_minor', 'grace_period_days',
+    ];
 
     /**
      * R-WDR-08 : autorise ou suspend les NOUVELLES demandes de retrait anticipé.
@@ -78,6 +127,9 @@ class CampaignService
     {
         if ($campaign->status === CampaignStatus::Closed) {
             throw TontineRuleException::campaignNotActive();
+        }
+        if ($campaign->isRotating() && $allow) {
+            throw TontineRuleException::notForRotatingCampaign();
         }
 
         $campaign->update(['allow_early_withdrawals' => $allow]);

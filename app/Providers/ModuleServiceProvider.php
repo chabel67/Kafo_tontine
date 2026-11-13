@@ -72,6 +72,7 @@ class ModuleServiceProvider extends ServiceProvider
             $labeler = new LedgerAccountLabeler();
             $labeler->registerResolver(AccountType::MemberSavings, new MembershipAccountLabelResolver());
             $labeler->registerResolver(AccountType::LoanReceivable, new LoanAccountLabelResolver());
+            $labeler->registerResolver(AccountType::RotatingPool, new \App\Modules\Tontine\Application\RotatingPoolAccountLabelResolver());
 
             return $labeler;
         });

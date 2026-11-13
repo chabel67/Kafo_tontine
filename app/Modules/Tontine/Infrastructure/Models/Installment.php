@@ -18,13 +18,17 @@ class Installment extends Model
 
     protected $fillable = [
         'membership_id', 'campaign_id', 'sequence_number',
-        'due_date', 'grace_period_ends_date', 'amount_minor', 'status',
+        'due_date', 'grace_period_ends_date', 'amount_minor', 'fee_minor', 'status',
+        'penalty_minor', 'penalty_reason', 'penalty_by', 'penalty_at',
         'paid_at', 'late_marked_at', 'waived_at', 'waived_by', 'waived_reason',
     ];
 
     protected $casts = [
         'status'               => InstallmentStatus::class,
         'amount_minor'         => 'integer',
+        'fee_minor'            => 'integer',
+        'penalty_minor'        => 'integer',
+        'penalty_at'           => 'datetime',
         'sequence_number'      => 'integer',
         'due_date'             => 'date',
         'grace_period_ends_date' => 'date',
@@ -63,6 +67,12 @@ class Installment extends Model
             ->whereColumn('installment_payments.installment_id', 'installments.id')]);
     }
 
+    /** Total dû : montant (cotisation + complément éventuel) + pénalité décidée par le personnel (D-R10). */
+    public function totalDueMinor(): int
+    {
+        return (int) $this->amount_minor + (int) $this->penalty_minor;
+    }
+
     /** Reste dû : 0 pour une échéance payée ou annulée. */
     public function remainingMinor(): int
     {
@@ -70,6 +80,21 @@ class Installment extends Model
             return 0;
         }
 
-        return max(0, $this->amount_minor - (int) ($this->paid_minor ?? 0));
+        return max(0, $this->totalDueMinor() - (int) ($this->paid_minor ?? 0));
+    }
+
+    /**
+     * Ventilation d'un cumul payé : pénalité d'abord, puis complément de frais, puis cotisation
+     * (part de la caisse commune). Sert au grand livre et au suivi de couverture des tours.
+     *
+     * @return array{penalty:int, fee:int, contribution:int}
+     */
+    public function splitPaid(int $paid): array
+    {
+        $penalty      = min($paid, (int) $this->penalty_minor);
+        $fee          = min(max(0, $paid - $penalty), (int) $this->fee_minor);
+        $contribution = min(max(0, $paid - $penalty - $fee), (int) $this->amount_minor - (int) $this->fee_minor);
+
+        return ['penalty' => $penalty, 'fee' => $fee, 'contribution' => $contribution];
     }
 }

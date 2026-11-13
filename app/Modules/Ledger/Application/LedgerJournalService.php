@@ -310,9 +310,24 @@ class LedgerJournalService
         if (str_starts_with($d, 'Encaissement cash')) {
             $type = 'cash_in';
             $label = 'Encaissement cash';
-        } elseif (str_starts_with($d, 'Encaissement MoMo')) {
+        } elseif (str_starts_with($d, 'Encaissement MoMo') || str_starts_with($d, 'Paiement MoMo')) {
             $type = 'cash_in';
             $label = 'Encaissement Mobile Money';
+        } elseif (str_starts_with($d, 'Cotisation tontine')) {
+            $type = 'rotation_contribution';
+            $label = 'Cotisation tontine rotative';
+        } elseif (str_starts_with($d, 'Cagnotte tontine')) {
+            $type = 'rotation_payout';
+            $label = $d;
+        } elseif (str_starts_with($d, 'Remboursement départ tontine') || str_starts_with($d, 'Reliquat tontine')) {
+            $type = 'rotation_payout';
+            $label = $d;
+        } elseif (str_starts_with($d, "Frais d'adhésion")) {
+            $type = 'membership_fee';
+            $label = "Frais d'adhésion";
+        } elseif (str_starts_with($d, 'Retrait anticipé')) {
+            $type = 'early_withdrawal';
+            $label = $d;
         } elseif (str_starts_with($d, 'Décaissement')) {
             $type = 'disbursement';
             $label = $d;

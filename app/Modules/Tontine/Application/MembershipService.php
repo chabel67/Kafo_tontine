@@ -29,6 +29,11 @@ class MembershipService
 
     private function enrollLocked(User $member, ?int $committedAmount, Campaign $campaign): Membership
     {
+        // Tontine rotative : groupe fermé, adhésions seulement avant le démarrage (lot 3).
+        if ($campaign->isRotating() && ($campaign->status->value !== 'open' || $campaign->started_at)) {
+            throw new TontineRuleException('Les adhésions à cette tontine sont closes : le groupe est fermé depuis son démarrage.', 'rotation_group_closed', 422);
+        }
+
         if ($campaign->status->value !== 'open' && $campaign->status->value !== 'active') {
             throw new TontineRuleException('La campagne n\'accepte pas de nouvelles adhésions.', 'campaign_not_accepting_members', 422);
         }

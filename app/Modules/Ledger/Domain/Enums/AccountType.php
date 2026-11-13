@@ -17,6 +17,9 @@ enum AccountType: string
     case MiscRevenue         = 'MISC_REVENUE';
     // Frais d'adhésion à une campagne (R-FEE-02) — produit, jamais de l'épargne membre.
     case FeeIncome           = 'FEE_INCOME';
+    // Caisse commune d'une campagne rotative : fonds collectés à redistribuer (passif).
+    // Clé ROTATING_POOL:{campaign_id}. Jamais confondue avec MEMBER_SAVINGS.
+    case RotatingPool        = 'ROTATING_POOL';
 
     public function label(): string
     {
@@ -31,7 +34,8 @@ enum AccountType: string
             self::ExpenseLoss        => 'Pertes (write-off)',
             self::OperationalExpense => 'Dépenses opérationnelles',
             self::MiscRevenue        => 'Recettes diverses',
-            self::FeeIncome          => 'Frais d\'adhésion',
+            self::FeeIncome          => 'Produits de frais (adhésion, tontine)',
+            self::RotatingPool       => 'Caisse tontine rotative',
         };
     }
 

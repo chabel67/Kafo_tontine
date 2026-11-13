@@ -43,6 +43,12 @@ class Membership extends Model
         return $this->belongsTo(Campaign::class);
     }
 
+    /** Tour attribué (campagne rotative) : un seul par adhésion. */
+    public function round(): \Illuminate\Database\Eloquent\Relations\HasOne
+    {
+        return $this->hasOne(RotationRound::class, 'beneficiary_membership_id');
+    }
+
     public function installments(): HasMany
     {
         return $this->hasMany(Installment::class);

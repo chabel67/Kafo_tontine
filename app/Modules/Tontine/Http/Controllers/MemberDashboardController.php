@@ -85,6 +85,9 @@ class MemberDashboardController extends Controller
                 'withdrawable_minor'      => (int) ($withdrawableByMembership[$m->id] ?? 0),
                 'allow_early_withdrawals' => (bool) ($m->campaign?->allow_early_withdrawals ?? false),
                 'campaign_status'         => $m->campaign?->status?->value,
+                'campaign_type'           => $m->campaign?->campaign_type?->value ?? 'savings',
+                'series_id'               => $m->campaign?->series_id,
+                'cycle_number'            => (int) ($m->campaign?->cycle_number ?? 1),
                 // R-FEE-02 : frais d'adhésion restant dus (0 si aucun ou réglés).
                 'membership_fee_remaining_minor' => \App\Modules\Tontine\Application\MembershipService::feeStatus($m)['remaining_minor'],
             ];
@@ -156,6 +159,10 @@ class MemberDashboardController extends Controller
                 'name'              => $m->campaign->name,
                 'status'            => $m->campaign->status->value,
                 'allow_early_withdrawals' => (bool) $m->campaign->allow_early_withdrawals,
+                'campaign_type'     => $m->campaign->campaign_type?->value ?? 'savings',
+                // Reconduction : regrouper « en cours / à venir / terminés » par série et cycle.
+                'series_id'         => $m->campaign->series_id,
+                'cycle_number'      => (int) ($m->campaign->cycle_number ?? 1),
                 'installment_count' => $m->campaign->duration_installments,
                 'total_amount_minor'=> $m->committed_amount_minor * $m->campaign->duration_installments,
             ],
@@ -178,6 +185,9 @@ class MemberDashboardController extends Controller
                 'id'           => $i->id,
                 'sequence'     => $i->sequence_number,
                 'due_date'     => $i->due_date->toDateString(),
+                // Tontine : complément (D-R5) et pénalité (D-R10) inclus dans le reste dû.
+                'fee_minor'     => (int) $i->fee_minor,
+                'penalty_minor' => (int) $i->penalty_minor,
                 'amount_minor' => $i->amount_minor,
                 'status'       => $i->status->value,
                 'paid_at'      => $i->paid_at?->toDateString(),

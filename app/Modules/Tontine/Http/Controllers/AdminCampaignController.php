@@ -29,6 +29,8 @@ class AdminCampaignController extends Controller
             ->with('marketCalendar')
             ->when($request->query('status'), fn ($q, $s) => $q->where('status', $s))
             ->when($request->query('search'), fn ($q, $s) => $q->where('name', 'ilike', "%{$s}%"))
+            ->when(in_array($request->query('campaign_type'), ['savings', 'rotating'], true),
+                fn ($q) => $q->where('campaign_type', $request->query('campaign_type')))
             ->orderByDesc('created_at')
             ->paginate(10);
 
@@ -73,7 +75,23 @@ class AdminCampaignController extends Controller
             'max_members'               => ['nullable', 'integer', 'min:1'],
             'membership_fee_minor'      => ['sometimes', 'integer', 'min:0', 'max:100000000'],
             'allow_early_withdrawals'   => ['sometimes', 'boolean'],
+            // Rotatif (brouillon) : un changement annule la confirmation du calendrier.
+            'installments_per_round'    => ['sometimes', 'integer', 'min:1', 'max:366'],
+            'contribution_schedule'     => ['sometimes', 'array'],
+            'rotation_fee_mode'         => ['sometimes', 'string', 'in:none,payout_deduction,contribution_surcharge'],
+            'rotation_fee_minor'        => ['sometimes', 'integer', 'min:0', 'max:100000000'],
         ]);
+
+        if (isset($data['contribution_schedule'])) {
+            $errors = app(\App\Modules\Tontine\Application\ScheduleCalculator::class)->validate($data['contribution_schedule']);
+            if ($errors !== []) {
+                throw \Illuminate\Validation\ValidationException::withMessages($errors);
+            }
+        }
+        if ($campaign->isRotating() && (isset($data['max_members']) || isset($data['installments_per_round']))) {
+            $data['duration_installments'] = (int) ($data['max_members'] ?? $campaign->max_members)
+                * (int) ($data['installments_per_round'] ?? $campaign->installments_per_round);
+        }
 
         $old      = $campaign->only(array_keys($data));
         $campaign = $this->service->update($campaign, $data);
@@ -171,16 +189,7 @@ class AdminCampaignController extends Controller
         $generator = app(\App\Modules\Tontine\Application\InstallmentGeneratorService::class);
         $campaign->load('marketCalendar');
 
-        $fakeMembership = new \App\Modules\Tontine\Infrastructure\Models\Membership([
-            'campaign_id' => $campaign->id,
-        ]);
-        $fakeMembership->setRelation('campaign', $campaign);
-
-        // Use reflection to call private computeDueDates
-        $ref    = new \ReflectionClass($generator);
-        $method = $ref->getMethod('computeDueDates');
-        $method->setAccessible(true);
-        $dates  = $method->invoke($generator, $campaign);
+        $dates = $generator->computeDueDates($campaign);
 
         $preview = array_map(fn ($d, $i) => [
             'sequence_number' => $i + 1,

@@ -434,6 +434,10 @@ class EarlyWithdrawalService
         $campaignId = Membership::whereKey($membershipId)->value('campaign_id');
         $campaign   = Campaign::whereKey($campaignId)->sharedLock()->firstOrFail();
 
+        // Tontine rotative : caisse commune, pas d'épargne individuelle à retirer.
+        if ($campaign->isRotating()) {
+            throw TontineRuleException::notForRotatingCampaign();
+        }
         if ($campaign->status !== CampaignStatus::Active) {
             throw TontineRuleException::campaignNotActive();
         }

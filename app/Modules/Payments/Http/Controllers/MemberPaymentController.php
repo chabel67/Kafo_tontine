@@ -90,7 +90,10 @@ class MemberPaymentController extends Controller
             'id'           => $p->id,
             'reference'    => $p->reference,
             'date'         => $p->created_at->toDateString(),
-            'label'        => 'Cotisation — ' . ($p->membership->campaign->name ?? '—'),
+            // R-FEE-02 : un frais d'adhésion n'est pas une cotisation (jamais d'épargne).
+            'label'        => ($p->purpose === 'membership_fee' ? 'Frais d\'adhésion — ' : 'Cotisation — ')
+                . ($p->membership->campaign->name ?? '—'),
+            'purpose'      => $p->purpose ?? 'contribution',
             'amount_minor' => $p->amount_minor,
             'type'         => 'debit',
             'status'       => $p->status->value,

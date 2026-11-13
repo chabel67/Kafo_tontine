@@ -15,7 +15,7 @@ use Illuminate\Support\Facades\DB;
 class DiagnoseLedgerHarmonisation extends Command
 {
     protected $signature   = 'kafo:diagnose-ledger';
-    protected $description = 'Diagnostic lecture seule : comptes MoMo en double, contre-passations multiples, équilibre, double usage de l\'épargne.';
+    protected $description = 'Diagnostic lecture seule : comptes MoMo en double, contre-passations multiples, équilibre, double usage de l\'épargne, caisses des tontines rotatives.';
 
     public function handle(): int
     {
@@ -98,6 +98,26 @@ class DiagnoseLedgerHarmonisation extends Command
         $this->line($frozen ? '' : '  aucun');
         if ($frozen) {
             $this->table(['Payout', 'Retrait en cours'], array_map(fn ($r) => [$r->reference, $r->withdrawal], $frozen));
+        }
+
+        // 7. Tontines rotatives : rapprochement de chaque caisse commune (lot 6).
+        $this->line("\n<comment>7. Caisses des tontines rotatives (rapprochement)</comment>");
+        if (! \Illuminate\Support\Facades\Schema::hasColumn('tontine_campaigns', 'campaign_type')) {
+            $this->line('  colonne campaign_type absente (migration des tontines rotatives pas encore appliquée)');
+        } else {
+            $campaigns = \App\Modules\Tontine\Infrastructure\Models\Campaign::where('campaign_type', 'rotating')->get();
+            if ($campaigns->isEmpty()) {
+                $this->line('  aucune tontine rotative');
+            }
+            $reconciler = app(\App\Modules\Tontine\Application\RotationReconciliationService::class);
+            foreach ($campaigns as $c) {
+                $r = $reconciler->reconcile($c);
+                $this->line(sprintf('  %s : comptable %d, attendu %d, écart %d', $c->name, $r['ledger_balance_minor'], $r['expected_minor'], $r['difference_minor']));
+                foreach ($r['anomalies'] as $a) {
+                    $this->warn("    - {$a}");
+                }
+                $problems += $r['balanced'] ? 0 : 1;
+            }
         }
 
         $this->line('');

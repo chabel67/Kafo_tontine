@@ -74,6 +74,12 @@ class CampaignClosureService
             if (! $locked || $locked->status !== CampaignStatus::Active) {
                 throw new CampaignAlreadyClosedException($campaign->id);
             }
+            // La clôture d'épargne (payouts individuels) ne s'applique pas à une tontine rotative.
+            if ($locked->isRotating()) {
+                throw new \App\Modules\Tontine\Domain\Exceptions\TontineRuleException(
+                    'Une tontine rotative se clôture par sa procédure propre (tous les tours versés, caisse à zéro).',
+                    'rotation_closure_required', 422);
+            }
 
             $memberships = Membership::where('campaign_id', $campaign->id)
                 ->where('status', MembershipStatus::Active)

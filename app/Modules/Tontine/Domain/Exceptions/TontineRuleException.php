@@ -10,6 +10,16 @@ use App\Modules\Identity\Domain\Exceptions\BusinessException;
  */
 class TontineRuleException extends BusinessException
 {
+    public static function notRotating(): self
+    {
+        return new self('Cette opération est réservée aux tontines rotatives.', 'not_rotating_campaign', 422);
+    }
+
+    public static function notForRotatingCampaign(): self
+    {
+        return new self('Opération indisponible sur une tontine rotative (pas d\'épargne individuelle).', 'not_for_rotating_campaign', 422);
+    }
+
     public static function campaignNotActive(): self
     {
         return new self('La campagne n\'est pas active : cette opération n\'est plus possible.', 'campaign_not_active', 422);

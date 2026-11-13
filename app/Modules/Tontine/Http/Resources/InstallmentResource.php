@@ -21,6 +21,10 @@ class InstallmentResource extends JsonResource
             // Additif : paiements partiels (présents si la requête a chargé withPaidMinor)
             'paid_minor'             => $this->when($this->paid_minor !== null, fn () => (int) $this->paid_minor),
             'remaining_minor'        => $this->when($this->paid_minor !== null, fn () => $this->remainingMinor()),
+            // Tontine rotative : complément de frais (D-R5) et pénalité décidée par le personnel (D-R10).
+            'fee_minor'              => (int) $this->fee_minor,
+            'penalty_minor'          => (int) $this->penalty_minor,
+            'penalty_reason'         => $this->penalty_reason,
         ];
     }
 }

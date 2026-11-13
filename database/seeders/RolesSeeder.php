@@ -47,6 +47,7 @@ class RolesSeeder extends Seeder
                     'campaign.view', 'campaign.manage',
                     'treasury.view', 'treasury.reconcile',
                     'withdrawal.view', 'withdrawal.request', 'withdrawal.review',
+                    'rotation.approve',
                 ]),
             ],
             [
@@ -70,6 +71,7 @@ class RolesSeeder extends Seeder
                     'audit.view', 'admin.users', 'reporting.view',
                     'withdrawal.view', 'withdrawal.request', 'withdrawal.review',
                     'withdrawal.disburse',
+                    'rotation.approve', 'rotation.disburse',
                 ]),
             ],
             [

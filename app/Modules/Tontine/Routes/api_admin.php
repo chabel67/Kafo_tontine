@@ -22,6 +22,46 @@ Route::middleware('auth:sanctum')->group(function () {
      *    (admin, trésorier — décision produit du 2026-10-29).
      */
 
+    // Tontines rotatives — lot 4 : couverture d'un tour, suivi d'un membre, pénalités (D-R10).
+    Route::get('admin/rotation-rounds/{round}/coverage', [\App\Modules\Tontine\Http\Controllers\AdminRotationController::class, 'coverage'])
+        ->middleware('permission:campaign.view,campaign.manage');
+    Route::get('admin/memberships/{membership}/rotation', [\App\Modules\Tontine\Http\Controllers\AdminRotationController::class, 'membership'])
+        ->middleware('permission:campaign.view,member.view');
+    // Lot 5 : distributions (validation, versement en deux temps sous step-up).
+    Route::prefix('admin/rotation-rounds/{round}')->group(function () {
+        $c = \App\Modules\Tontine\Http\Controllers\AdminRotationController::class;
+        Route::get('payout', [$c, 'payoutPreview'])->middleware('permission:rotation.approve,rotation.disburse,campaign.view');
+        Route::post('approve', [$c, 'approveRound'])->middleware('permission:rotation.approve');
+        Route::post('payout/initiate', [$c, 'initiatePayout'])->middleware(['permission:rotation.disburse', 'step_up']);
+        Route::post('payout/confirm', [$c, 'confirmPayout'])->middleware('permission:rotation.disburse');
+        Route::post('payout/fail', [$c, 'failPayout'])->middleware('permission:rotation.disburse');
+    });
+    // Reconduction des campagnes (R1–R4).
+    $rn = \App\Modules\Tontine\Http\Controllers\AdminCampaignRenewalController::class;
+    Route::get('admin/campaigns/{campaign}/renewal/candidates', [$rn, 'candidates'])->middleware('permission:campaign.create');
+    Route::post('admin/campaigns/{campaign}/renewal/preview', [$rn, 'preview'])->middleware('permission:campaign.create');
+    // Confirmer ouvre directement le nouveau cycle aux adhésions : transition réservée (R-CAMP-01).
+    Route::post('admin/campaigns/{campaign}/renewal', [$rn, 'confirm'])->middleware('permission:campaign.transition');
+    Route::get('admin/campaigns/{campaign}/cycles', [$rn, 'cycles'])->middleware('permission:campaign.view,campaign.manage');
+
+    // Lot 8 : départs, remplaçants, sorties de caisse en deux temps, clôture (D-R7, D-R11).
+    $lc = \App\Modules\Tontine\Http\Controllers\AdminRotationLifecycleController::class;
+    Route::get('admin/campaigns/{campaign}/rotation/departures', [$lc, 'departures'])->middleware('permission:campaign.view,campaign.manage');
+    Route::post('admin/memberships/{membership}/rotation/departure', [$lc, 'startDeparture'])->middleware('permission:campaign.manage');
+    Route::post('admin/rotation-departures/{departure}/replacement', [$lc, 'replace'])->middleware('permission:campaign.manage');
+    Route::post('admin/rotation-departures/{departure}/refund/initiate', [$lc, 'initiateRefund'])->middleware(['permission:rotation.disburse', 'step_up']);
+    Route::post('admin/campaigns/{campaign}/rotation/surplus/payouts/initiate', [$lc, 'initiateSurplus'])->middleware(['permission:rotation.disburse', 'step_up']);
+    Route::post('admin/rotation-cash-outs/{attempt}/confirm', [$lc, 'confirmCashOut'])->middleware('permission:rotation.disburse');
+    Route::post('admin/rotation-cash-outs/{attempt}/fail', [$lc, 'failCashOut'])->middleware('permission:rotation.disburse');
+    Route::get('admin/campaigns/{campaign}/rotation/closure', [$lc, 'closurePreview'])->middleware('permission:campaign.view,campaign.manage');
+    Route::post('admin/campaigns/{campaign}/rotation/surplus/revenue', [$lc, 'surplusToRevenue'])->middleware(['permission:campaign.transition,campaign.close', 'step_up']);
+    Route::post('admin/campaigns/{campaign}/rotation/close', [$lc, 'close'])->middleware(['permission:campaign.transition,campaign.close', 'step_up']);
+
+    Route::post('admin/installments/{installment}/penalty', [\App\Modules\Tontine\Http\Controllers\AdminRotationController::class, 'applyPenalty'])
+        ->middleware('permission:campaign.manage');
+    Route::post('admin/installments/{installment}/penalty/cancel', [\App\Modules\Tontine\Http\Controllers\AdminRotationController::class, 'cancelPenalty'])
+        ->middleware('permission:campaign.manage');
+
     // Campagnes
     Route::prefix('admin/campaigns')->group(function () {
         Route::middleware('permission:campaign.view,payment.view')->group(function () {
@@ -33,6 +73,26 @@ Route::middleware('auth:sanctum')->group(function () {
             ->middleware('permission:campaign.create');
         Route::patch('/{campaign}',           [AdminCampaignController::class, 'update'])
             ->middleware('permission:campaign.manage');
+        // Tontines rotatives — lot 2 : aperçu et confirmation du calendrier (D-R1, D-R2).
+        Route::get('/{campaign}/rotation/schedule', [\App\Modules\Tontine\Http\Controllers\AdminRotationController::class, 'schedulePreview'])
+            ->middleware('permission:campaign.view,campaign.manage');
+        Route::post('/{campaign}/rotation/schedule/confirm', [\App\Modules\Tontine\Http\Controllers\AdminRotationController::class, 'confirmSchedule'])
+            ->middleware('permission:campaign.manage');
+        // Lot 3 : tours (attribution manuelle ou par tirage, figée au démarrage — D-R6).
+        Route::get('/{campaign}/rotation/rounds', [\App\Modules\Tontine\Http\Controllers\AdminRotationController::class, 'rounds'])
+            ->middleware('permission:campaign.view,campaign.manage');
+        Route::post('/{campaign}/rotation/draw', [\App\Modules\Tontine\Http\Controllers\AdminRotationController::class, 'draw'])
+            ->middleware('permission:campaign.manage');
+        Route::post('/{campaign}/rotation/assign', [\App\Modules\Tontine\Http\Controllers\AdminRotationController::class, 'assign'])
+            ->middleware('permission:campaign.manage');
+        // Lot 4 : suivi (vue d'ensemble, tours, membres).
+        Route::get('/{campaign}/rotation/overview', [\App\Modules\Tontine\Http\Controllers\AdminRotationController::class, 'overview'])
+            ->middleware('permission:campaign.view,campaign.manage');
+        // Lot 6 : rapprochement de la caisse commune.
+        Route::get('/{campaign}/rotation/reconciliation', [\App\Modules\Tontine\Http\Controllers\AdminRotationController::class, 'reconciliation'])
+            ->middleware('permission:campaign.view,treasury.view');
+        Route::post('/{campaign}/rotation/start', [\App\Modules\Tontine\Http\Controllers\AdminRotationController::class, 'start'])
+            ->middleware('permission:campaign.transition');
         // R-WDR-08 : autoriser / suspendre les retraits anticipés (motif obligatoire, audité).
         Route::patch('/{campaign}/withdrawal-policy', [AdminCampaignController::class, 'updateWithdrawalPolicy'])
             ->middleware('permission:campaign.manage');

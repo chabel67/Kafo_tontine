@@ -39,6 +39,17 @@ class SavingsAvailabilityService
      */
     public function breakdown(Membership $membership, ?string $excludeWithdrawalId = null, ?string $excludeLoanRequestId = null): array
     {
+        // Tontine rotative : aucune épargne individuelle disponible (caisse commune).
+        if ($membership->campaign()->first()?->isRotating()) {
+            return [
+                'paid_minor' => 0, 'savings_minor' => 0, 'withdrawn_minor' => 0, 'committed_minor' => 0,
+                'advances_outstanding_minor' => 0, 'advance_requests_minor' => 0, 'reserved_minor' => 0,
+                'available_minor' => 0, 'not_applicable' => true,
+                'debts' => ['outstanding_minor' => 0, 'overdue_minor' => 0, 'deducted' => false],
+                'fees_minor' => 0,
+            ];
+        }
+
         $key     = "MEMBER_SAVINGS:{$membership->id}";
         $savings = $this->ledger->balances([$key])[$key];
 
@@ -133,8 +144,16 @@ class SavingsAvailabilityService
             ->groupBy('membership_id')
             ->pluck('total', 'membership_id');
 
+        $rotating = Membership::whereIn('id', $membershipIds)
+            ->whereHas('campaign', fn ($q) => $q->where('campaign_type', 'rotating'))
+            ->pluck('id')->flip();
+
         $out = [];
         foreach ($membershipIds as $id) {
+            if (isset($rotating[$id])) {
+                $out[$id] = 0;
+                continue;
+            }
             $reserved = (int) ($withdrawals[$id] ?? 0) + (int) ($requests[$id] ?? 0) + (int) ($advances[$id] ?? 0);
             $out[$id] = max(0, ($balances["MEMBER_SAVINGS:{$id}"] ?? 0) - $reserved);
         }

@@ -470,6 +470,10 @@ class LendingService
     {
         $campaignId = Membership::whereKey($membershipId)->value('campaign_id');
         $campaign   = Campaign::whereKey($campaignId)->sharedLock()->firstOrFail();
+        // Une avance s'adosse à une épargne individuelle : impossible sur une tontine rotative.
+        if ($campaign->isRotating()) {
+            throw \App\Modules\Tontine\Domain\Exceptions\TontineRuleException::notForRotatingCampaign();
+        }
         if ($campaign->status !== CampaignStatus::Active) {
             throw LendingRuleException::campaignNotActive();
         }

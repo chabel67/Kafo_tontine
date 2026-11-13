@@ -101,8 +101,7 @@ class PaymentService
                 'created_by'      => $cashierId,
             ]);
 
-            $this->postLedgerCash($payment, $membership);
-            $this->affectInstallments($payment, $membership);
+            $this->bookContribution($payment, $membership, 'cash');
 
             return $payment;
         });
@@ -230,13 +229,7 @@ class PaymentService
 
             $membership = $payment->membership()->with(['campaign'])->first();
 
-            if ($payment->channel === PaymentChannel::Cash) {
-                $this->postLedgerCash($payment, $membership);
-            } else {
-                $this->postLedgerMomo($payment, $membership, $payment->channel->value);
-            }
-
-            $this->affectInstallments($payment, $membership);
+            $this->bookContribution($payment, $membership, $payment->channel->value);
 
             return $payment->fresh();
         });
@@ -285,8 +278,7 @@ class PaymentService
             ]);
 
             $membership = $payment->membership()->with(['campaign'])->first();
-            $this->postLedgerMomo($payment, $membership, $channel);
-            $this->affectInstallments($payment, $membership);
+            $this->bookContribution($payment, $membership, $channel);
 
             return $payment->fresh();
         });
@@ -325,6 +317,52 @@ class PaymentService
     // -----------------------------------------------------------------------
     // Ledger
     // -----------------------------------------------------------------------
+
+    /**
+     * Comptabilise une cotisation confirmée et l'affecte aux échéances.
+     *  - Épargne : DR trésorerie / CR MEMBER_SAVINGS (inchangé).
+     *  - Tontine rotative : DR trésorerie / CR ROTATING_POOL (part cotisation, et tout surplus non
+     *    affecté) + FEE_INCOME (complément D-R5) + PENALTY_INCOME (pénalité D-R10). Jamais d'épargne.
+     */
+    private function bookContribution(Payment $payment, Membership $membership, string $channel): void
+    {
+        $campaign = $membership->relationLoaded('campaign') ? $membership->campaign : $membership->campaign()->first();
+
+        if (! $campaign?->isRotating()) {
+            $channel === 'cash' ? $this->postLedgerCash($payment, $membership) : $this->postLedgerMomo($payment, $membership, $channel);
+            $this->affectInstallments($payment, $membership);
+            return;
+        }
+
+        $split    = $this->affectInstallments($payment, $membership);
+        $pool     = $payment->amount_minor - $split['penalty'] - $split['fee'];
+        $poolKey  = "ROTATING_POOL:{$campaign->id}";
+        $treasury = \App\Modules\Ledger\Domain\ValueObjects\TreasuryAccount::key($channel);
+
+        $this->ledger->openAccount($treasury, \App\Modules\Ledger\Domain\ValueObjects\TreasuryAccount::type($channel));
+        $this->ledger->openAccount($poolKey, AccountType::RotatingPool, null, "Caisse tontine — {$campaign->name}");
+
+        $legs = [['account' => $treasury, 'type' => 'debit', 'amount' => $payment->amount_minor]];
+        if ($pool > 0) {
+            $legs[] = ['account' => $poolKey, 'type' => 'credit', 'amount' => $pool];
+        }
+        if ($split['fee'] > 0) {
+            $this->ledger->openAccount('FEE_INCOME', AccountType::FeeIncome);
+            $legs[] = ['account' => 'FEE_INCOME', 'type' => 'credit', 'amount' => $split['fee']];
+        }
+        if ($split['penalty'] > 0) {
+            $this->ledger->openAccount('PENALTY_INCOME', AccountType::PenaltyIncome);
+            $legs[] = ['account' => 'PENALTY_INCOME', 'type' => 'credit', 'amount' => $split['penalty']];
+        }
+
+        $this->ledger->post(
+            legs:        $legs,
+            reference:   $this->ledger->nextReference(),
+            description: "Cotisation tontine — {$payment->reference}",
+            createdById: $payment->created_by,
+            metadata:    ['payment_id' => $payment->id, 'channel' => $channel, 'campaign_id' => $campaign->id, 'membership_id' => $membership->id, ...$split],
+        );
+    }
 
     private function postLedgerCash(Payment $payment, Membership $membership): void
     {
@@ -382,9 +420,13 @@ class PaymentService
      * Le montant déjà affecté (paiements partiels antérieurs) est déduit : une échéance
      * ne reçoit que son reste dû, et passe `paid` quand le cumul atteint son montant.
      */
-    private function affectInstallments(Payment $payment, Membership $membership): void
+    /**
+     * @return array{penalty:int, fee:int, contribution:int} ventilation du montant affecté
+     */
+    private function affectInstallments(Payment $payment, Membership $membership): array
     {
         $remaining = $payment->amount_minor;
+        $split     = ['penalty' => 0, 'fee' => 0, 'contribution' => 0];
 
         $unpaid = Installment::where('membership_id', $membership->id)
             ->whereIn('status', [InstallmentStatus::Pending->value, InstallmentStatus::Late->value])
@@ -401,7 +443,8 @@ class PaymentService
             if ($remaining <= 0) break;
 
             $paidBefore = (int) ($alreadyPaid[$installment->id] ?? 0);
-            $due        = $installment->amount_minor - $paidBefore;
+            // Total dû = cotisation (+ complément) + pénalité éventuelle (D-R10)
+            $due        = $installment->totalDueMinor() - $paidBefore;
 
             if ($due > 0) {
                 $allocated = min($remaining, $due);
@@ -412,6 +455,12 @@ class PaymentService
                     'amount_minor'   => $allocated,
                     'created_at'     => now(),
                 ]);
+
+                $before = $installment->splitPaid($paidBefore);
+                $after  = $installment->splitPaid($paidBefore + $allocated);
+                foreach ($split as $part => $_) {
+                    $split[$part] += $after[$part] - $before[$part];
+                }
 
                 $remaining -= $allocated;
                 $due       -= $allocated;
@@ -425,6 +474,8 @@ class PaymentService
                 ]);
             }
         }
+
+        return $split;
     }
 
     // -----------------------------------------------------------------------
