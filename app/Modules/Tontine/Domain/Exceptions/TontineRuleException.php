@@ -66,4 +66,13 @@ class TontineRuleException extends BusinessException
     {
         return new self('Cette clé de requête a déjà servi pour une autre opération.', 'idempotency_key_reused', 409);
     }
+
+    public static function campaignNotDeletable(): self
+    {
+        return new self(
+            'Seule une campagne en brouillon, sans adhésion ni opération, peut être supprimée.',
+            'campaign_not_deletable',
+            422,
+        );
+    }
 }

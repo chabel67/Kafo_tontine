@@ -8,6 +8,7 @@ use App\Modules\Tontine\Domain\Enums\CampaignStatus;
 use App\Modules\Tontine\Domain\Exceptions\TontineRuleException;
 use App\Modules\Tontine\Domain\Exceptions\InvalidStatusTransitionException;
 use App\Modules\Tontine\Infrastructure\Models\Campaign;
+use Illuminate\Support\Facades\DB;
 
 class CampaignService
 {
@@ -96,7 +97,11 @@ class CampaignService
         // silencieux). La politique de retrait a son propre endpoint motivé et audité.
         if ($campaign->status !== CampaignStatus::Draft) {
             $locked = array_values(array_diff(array_keys($data), self::SOFT_RULES));
-            $locked = array_values(array_filter($locked, fn ($f) => $campaign->getAttribute($f) != $data[$f]));
+            $locked = array_values(array_filter($locked, function ($f) use ($campaign, $data) {
+                $current = $campaign->getAttribute($f);
+
+                return ($current instanceof \BackedEnum ? $current->value : $current) != $data[$f];
+            }));
             if ($locked !== []) {
                 throw TontineRuleException::hardRuleLocked($locked);
             }
@@ -111,6 +116,47 @@ class CampaignService
         }
 
         return $campaign->fresh();
+    }
+
+    /**
+     * Suppression définitive d'un brouillon : aucune adhésion, aucun paiement, aucune écriture.
+     * Le calendrier rotatif éventuellement confirmé (dates, tours) part avec la campagne.
+     * Renvoie l'instantané de la campagne pour l'audit.
+     */
+    public function deleteDraft(Campaign $campaign): array
+    {
+        return DB::transaction(function () use ($campaign) {
+            $locked = Campaign::whereKey($campaign->id)->lockForUpdate()->firstOrFail();
+            $used   = $locked->status !== CampaignStatus::Draft
+                || $locked->memberships()->exists()
+                || DB::table('campaign_payouts')->where('campaign_id', $locked->id)->exists()
+                || DB::table('loan_requests')->where('campaign_id', $locked->id)->exists()
+                || DB::table('loans')->where('campaign_id', $locked->id)->exists()
+                || DB::table('campaign_renewals')->where('target_campaign_id', $locked->id)->orWhere('source_campaign_id', $locked->id)->exists()
+                || Campaign::where('previous_campaign_id', $locked->id)->exists();
+            if ($used) {
+                throw TontineRuleException::campaignNotDeletable();
+            }
+
+            $snapshot = $locked->only([
+                'id', 'name', 'campaign_type', 'contribution_mode', 'contribution_amount_minor',
+                'first_installment_date', 'duration_installments', 'max_members', 'created_by',
+            ]);
+            foreach (['contribution_mode', 'campaign_type'] as $f) {
+                if (($snapshot[$f] ?? null) instanceof \BackedEnum) {
+                    $snapshot[$f] = $snapshot[$f]->value;
+                }
+            }
+            if ($snapshot['first_installment_date'] instanceof \DateTimeInterface) {
+                $snapshot['first_installment_date'] = $snapshot['first_installment_date']->format('Y-m-d');
+            }
+
+            DB::table('rotation_rounds')->where('campaign_id', $locked->id)->delete();
+            DB::table('campaign_schedule_dates')->where('campaign_id', $locked->id)->delete();
+            $locked->delete();
+
+            return $snapshot;
+        });
     }
 
     /** Paramètres dont dépend le calendrier confirmé d'une tontine rotative. */

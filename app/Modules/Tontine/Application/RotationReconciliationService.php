@@ -75,10 +75,11 @@ class RotationReconciliationService
         if ($reserved > $ledger) {
             $anomalies[] = "Tours validés ou en versement ({$reserved} XOF) supérieurs à la caisse ({$ledger} XOF).";
         }
-        $savingsAccounts = \Illuminate\Support\Facades\DB::table('ledger_accounts')
-            ->whereIn('key', $membershipIds->map(fn ($id) => "MEMBER_SAVINGS:{$id}"))->count();
+        // Seuls des mouvements sur une épargne individuelle sont anormaux (comptes vides ouverts avant correctif : sans effet).
+        $savingsAccounts = \Illuminate\Support\Facades\DB::table('ledger_entries')
+            ->whereIn('account_key', $membershipIds->map(fn ($id) => "MEMBER_SAVINGS:{$id}"))->distinct()->count('account_key');
         if ($savingsAccounts > 0) {
-            $anomalies[] = "{$savingsAccounts} compte(s) d'épargne individuelle ouvert(s) pour cette tontine (ne devrait pas exister).";
+            $anomalies[] = "{$savingsAccounts} compte(s) d'épargne individuelle mouvementé(s) pour cette tontine (ne devrait pas exister).";
         }
         if ($ledger !== $expected) {
             array_unshift($anomalies, "Écart de caisse : solde comptable {$ledger} XOF, attendu {$expected} XOF.");

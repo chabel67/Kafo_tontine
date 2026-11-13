@@ -73,6 +73,9 @@ Route::middleware('auth:sanctum')->group(function () {
             ->middleware('permission:campaign.create');
         Route::patch('/{campaign}',           [AdminCampaignController::class, 'update'])
             ->middleware('permission:campaign.manage');
+        // Brouillon seulement : suppression définitive, motif obligatoire, auditée.
+        Route::delete('/{campaign}',          [AdminCampaignController::class, 'destroy'])
+            ->middleware('permission:campaign.create');
         // Tontines rotatives — lot 2 : aperçu et confirmation du calendrier (D-R1, D-R2).
         Route::get('/{campaign}/rotation/schedule', [\App\Modules\Tontine\Http\Controllers\AdminRotationController::class, 'schedulePreview'])
             ->middleware('permission:campaign.view,campaign.manage');

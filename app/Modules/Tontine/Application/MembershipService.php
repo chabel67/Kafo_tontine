@@ -217,6 +217,10 @@ class MembershipService
 
     private function openSavingsAccount(Membership $membership): void
     {
+        // Tontine rotative : pas d'épargne individuelle, la caisse commune suffit (R-ROT-06).
+        if ($membership->campaign?->isRotating()) {
+            return;
+        }
         $memberName   = $membership->user->full_name   ?? $membership->user_id;
         $campaignName = $membership->campaign->name    ?? $membership->campaign_id;
 

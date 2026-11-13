@@ -71,7 +71,14 @@ class AdminCampaignController extends Controller
             'market_calendar_id'        => ['nullable', 'integer', 'exists:market_calendars,id'],
             'first_installment_date'    => ['sometimes', 'date'],
             'duration_installments'     => ['sometimes', 'integer', 'min:1'],
-            'contribution_amount_minor' => ['sometimes', 'integer', 'min:1'],
+            'contribution_amount_minor' => ['sometimes', 'nullable', 'integer', 'min:1'],
+            // Brouillon : mode de cotisation, bornes et règles de prêt modifiables comme à la création.
+            'contribution_mode'         => ['sometimes', 'string', 'in:fixed,custom'],
+            'min_contribution_minor'    => ['sometimes', 'nullable', 'integer', 'min:1'],
+            'max_contribution_minor'    => ['sometimes', 'nullable', 'integer', 'min:1'],
+            'min_membership_age_days'   => ['sometimes', 'integer', 'min:0'],
+            'min_trust_score'           => ['sometimes', 'integer', 'min:0', 'max:100'],
+            'maker_checker_threshold_minor' => ['sometimes', 'integer', 'min:0'],
             'max_members'               => ['nullable', 'integer', 'min:1'],
             'membership_fee_minor'      => ['sometimes', 'integer', 'min:0', 'max:100000000'],
             'allow_early_withdrawals'   => ['sometimes', 'boolean'],
@@ -88,6 +95,7 @@ class AdminCampaignController extends Controller
                 throw \Illuminate\Validation\ValidationException::withMessages($errors);
             }
         }
+        $data = $this->normalizeContributionMode($campaign, $data);
         if ($campaign->isRotating() && (isset($data['max_members']) || isset($data['installments_per_round']))) {
             $data['duration_installments'] = (int) ($data['max_members'] ?? $campaign->max_members)
                 * (int) ($data['installments_per_round'] ?? $campaign->installments_per_round);
@@ -100,6 +108,61 @@ class AdminCampaignController extends Controller
             $old, $campaign->only(array_keys($data)));
 
         return ApiResponse::success(new CampaignResource($campaign));
+    }
+
+    /**
+     * Cohérence du mode de cotisation (R-CAMP-06/07) sur les valeurs effectives après modification :
+     * fixe ⇒ montant obligatoire, bornes effacées ; personnalisé ⇒ montant effacé, max > min.
+     * Une tontine rotative reste en cotisation fixe (D-R1).
+     */
+    private function normalizeContributionMode(Campaign $campaign, array $data): array
+    {
+        $touched = array_intersect(array_keys($data), ['contribution_mode', 'contribution_amount_minor', 'min_contribution_minor', 'max_contribution_minor']);
+        if ($touched === []) {
+            return $data;
+        }
+        $mode = $data['contribution_mode'] ?? $campaign->contribution_mode->value;
+        if ($campaign->isRotating() && $mode !== 'fixed') {
+            throw ValidationException::withMessages(['contribution_mode' => 'Une tontine rotative exige une cotisation fixe (D-R1).']);
+        }
+        if ($mode === 'fixed') {
+            $amount = array_key_exists('contribution_amount_minor', $data) ? $data['contribution_amount_minor'] : $campaign->contribution_amount_minor;
+            if (! $amount) {
+                throw ValidationException::withMessages(['contribution_amount_minor' => 'Le montant de cotisation est obligatoire en mode cotisation fixe.']);
+            }
+            if ($campaign->status === CampaignStatus::Draft) {
+                $data['min_contribution_minor'] = null;
+                $data['max_contribution_minor'] = null;
+            }
+
+            return $data;
+        }
+        if ($campaign->status === CampaignStatus::Draft) {
+            $data['contribution_amount_minor'] = null;
+        }
+        $min = array_key_exists('min_contribution_minor', $data) ? $data['min_contribution_minor'] : $campaign->min_contribution_minor;
+        $max = array_key_exists('max_contribution_minor', $data) ? $data['max_contribution_minor'] : $campaign->max_contribution_minor;
+        if ($min && $max && $max <= $min) {
+            throw ValidationException::withMessages(['max_contribution_minor' => 'Le montant maximum doit être supérieur au montant minimum.']);
+        }
+
+        return $data;
+    }
+
+    /**
+     * DELETE /admin/campaigns/{id} — suppression définitive d'un brouillon (motif ≥ 10 car., audité).
+     * Un brouillon n'a ni adhésion, ni paiement, ni écriture : rien d'autre n'est perdu.
+     */
+    public function destroy(Request $request, Campaign $campaign): JsonResponse
+    {
+        $data = $request->validate(['reason' => ['required', 'string', 'min:10', 'max:500']]);
+
+        $snapshot = $this->service->deleteDraft($campaign);
+
+        $this->audit->logFromRequest($request, 'campaign.delete', 'tontine_campaign', $snapshot['id'],
+            $snapshot, ['deleted' => true, 'reason' => $data['reason']]);
+
+        return ApiResponse::success(['id' => $snapshot['id'], 'deleted' => true]);
     }
 
     /**
