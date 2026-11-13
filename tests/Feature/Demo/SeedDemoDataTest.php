@@ -23,7 +23,10 @@ class SeedDemoDataTest extends TestCase
         $this->artisan('kafo:seed-demo')->assertSuccessful();
 
         $this->assertGreaterThanOrEqual(48, User::where('phone', 'like', '+22901970%')->count());
-        $this->assertSame(8, Campaign::count());
+        $this->assertSame(10, Campaign::count());
+        $closed = Campaign::where('name', 'Tontine des vendeuses de Ganhi')->sole();
+        $this->assertSame('closed', $closed->status->value);
+        $this->assertSame('active', Campaign::where('previous_campaign_id', $closed->id)->sole()->status->value);
         $this->assertGreaterThan(500, DB::table('payments')->where('status', 'confirmed')->count());
         $this->assertLedgerBalanced();
         // Tontine : aucune épargne individuelle ouverte à la validation des adhésions (R-ROT-06).

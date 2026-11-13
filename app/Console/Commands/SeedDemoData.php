@@ -64,13 +64,11 @@ class SeedDemoData extends Command
     private array $people = [];
     private int $seq = 0;
 
+    /** Scénarios ajoutés après la première diffusion : chacun a son propre marqueur. */
+    private const CLOSED_ROTATION = 'Tontine des vendeuses de Ganhi';
+
     public function handle(): int
     {
-        if (User::where('phone', self::MARKER_PHONE)->exists()) {
-            $this->info('[kafo:seed-demo] Données de démonstration déjà présentes : rien à faire.');
-
-            return self::SUCCESS;
-        }
         $super = User::where('phone', '+22900000001')->first()
             ?? User::whereHas('roles', fn ($q) => $q->where('name', 'super_admin'))->first();
         if (! $super) {
@@ -80,22 +78,35 @@ class SeedDemoData extends Command
         }
 
         $this->today = Carbon::today();
+        $this->super = $super;
         mt_srand(20261114);
+        $base   = ! User::where('phone', self::MARKER_PHONE)->exists();
+        $closed = ! Campaign::where('name', self::CLOSED_ROTATION)->exists();
+        if (! $base && ! $closed) {
+            $this->info('[kafo:seed-demo] Données de démonstration déjà présentes : rien à faire.');
+
+            return self::SUCCESS;
+        }
 
         try {
-            DB::transaction(function () use ($super) {
-                $this->super = $super;
+            DB::transaction(function () use ($base, $closed) {
                 $this->at(-140);
                 $this->createStaff();
-                $this->createPeople();
-
-                $this->savingsMarket();
-                $this->savingsWomen();
-                $this->schoolCycles();
-                $this->rotatingTraders();
-                $this->openAndDraftCampaigns();
-                $this->loans();
-                $this->manualEntries();
+                if ($base) {
+                    $this->createPeople();
+                    $this->savingsMarket();
+                    $this->savingsWomen();
+                    $this->schoolCycles();
+                    $this->rotatingTraders();
+                    $this->openAndDraftCampaigns();
+                    $this->loans();
+                    $this->manualEntries();
+                } else {
+                    $this->people = User::where('phone', 'like', '+22901970%')->orderBy('phone')->get()->all();
+                }
+                if ($closed) {
+                    $this->closedRotation();
+                }
             });
         } finally {
             Carbon::setTestNow();
@@ -488,6 +499,117 @@ class SeedDemoData extends Command
             if ($offset !== -14) {
                 $payouts->confirm($round->fresh(), 'REMISE-' . abs($offset), $this->admin);
             }
+        }
+    }
+
+    // ── Tontine terminée et clôturée (cycle 1), reconduite et en cours (cycle 2) ──
+
+    private function closedRotation(): void
+    {
+        $first = $this->today->copy()->addDays(-126);
+        $c = $this->campaign([
+            'name' => self::CLOSED_ROTATION, 'description' => 'Six vendeuses cotisent 15 000 FCFA chaque semaine (+ 500 FCFA de frais) ; cycle terminé et clôturé.',
+            'campaign_type' => 'rotating', 'contribution_mode' => 'fixed', 'contribution_amount_minor' => 15000,
+            'max_members' => 6, 'installments_per_round' => 1, 'first_installment_date' => $first->toDateString(),
+            'contribution_schedule' => ['type' => 'weekly', 'weekday' => strtolower($first->englishDayOfWeek), 'every_weeks' => 1],
+            'rotation_fee_mode' => 'contribution_surcharge', 'rotation_fee_minor' => 500, 'grace_period_days' => 1,
+        ], -138);
+        $this->at(-137);
+        app(RotationScheduleService::class)->confirm($c->fresh());
+        $this->transition($c, CampaignStatus::Open, -136, 'Ouverture des adhésions.');
+
+        $members = [];
+        foreach ($this->pick(30, 6) as $i => $u) {
+            $members[] = $this->enrollAndValidate($u, $c, -135 + intdiv($i, 3));
+        }
+        $assign = app(RotationAssignmentService::class);
+        $this->at(-130, 16);
+        $draw = $assign->draw($c->fresh(), 2026);
+        $assign->assign($c->fresh(), $draw['order'], 'draw', $draw['seed']);
+        $this->at(-128, 9);
+        $assign->start($c->fresh(), $this->super);
+
+        // Cotisations : un retard pénalisé (payé avec la pénalité), un trop-perçu de 3 000 la dernière semaine.
+        $tracking = app(RotationTrackingService::class);
+        foreach ($members as $i => $m) {
+            foreach (Installment::where('membership_id', $m->id)->orderBy('sequence_number')->get() as $k => $inst) {
+                $offset = $this->offsetOf($inst->due_date);
+                $amount = (int) $inst->amount_minor;
+                if ($i === 2 && $k === 2) {
+                    $this->at($offset + 2, 9);
+                    $tracking->applyPenalty($inst->fresh(), 1500, 'Cotisation arrivée deux jours après le marché.', $this->manager);
+                    $this->at($offset + 2, 15);
+                    $this->payCash($m, $amount + 1500, 'Cotisation et pénalité de retard');
+                    continue;
+                }
+                $extra = $i === 4 && $k === 5 ? 3000 : 0;
+                $this->at($offset, 8 + $k % 6, ($i * 9) % 60);
+                $k % 2 ? $this->payMomo($m, $amount + $extra, PaymentChannel::Mtn) : $this->payCash($m, $amount + $extra, 'Cotisation tontine');
+            }
+        }
+
+        $payouts = app(RotationPayoutService::class);
+        foreach (RotationRound::where('campaign_id', $c->id)->orderBy('round_number')->get() as $round) {
+            $offset = $this->offsetOf($round->scheduled_date);
+            $this->at($offset + ($round->round_number === 3 ? 2 : 0), 17);
+            $round = $payouts->approve($round->fresh(), $this->manager, null, null);
+            $this->at($offset + 3, 10);
+            $payouts->initiate($round->fresh(), 'cash', null, (string) Str::uuid(), $this->admin);
+            $payouts->confirm($round->fresh(), 'REMISE-GANHI-' . $round->round_number, $this->admin);
+        }
+
+        // Reliquat (D-R11) : 2 000 rendus au membre (deux temps), 1 000 passés en produit, puis clôture.
+        $this->at(-85, 10);
+        $cash = app(\App\Modules\Tontine\Application\RotationCashOutService::class);
+        $attempt = $cash->initiateSurplus($c->fresh(), $members[4]->fresh(), 2000, 'Rendu du trop-perçu de la dernière semaine.',
+            'cash', null, (string) Str::uuid(), $this->admin);
+        $cash->confirm($attempt->fresh(), 'RELIQUAT-1', $this->admin2);
+        $closure = app(\App\Modules\Tontine\Application\RotationClosureService::class);
+        $this->at(-85, 15);
+        $closure->surplusToRevenue($c->fresh(), 1000, 'Solde décidé en assemblée : frais de réunion.', $this->super);
+        $this->at(-84, 11);
+        $closure->close($c->fresh(), $this->super);
+
+        // Cycle 2 : mêmes membres, ordre du cycle 1 repris, démarré il y a un mois.
+        $this->at(-40, 10);
+        $renewal = app(CampaignRenewalService::class);
+        $cycle2 = $renewal->confirm($c->fresh(), [
+            'first_installment_date' => $this->day(-28),
+            'members' => array_map(fn ($m) => ['membership_id' => $m->id], $members),
+        ], (string) Str::uuid(), $this->super);
+
+        $byUser = [];
+        foreach (Membership::where('campaign_id', $cycle2->id)->get() as $k => $m) {
+            $this->at(-38 + intdiv($k, 3), 10, $k);
+            $byUser[$m->user_id] = app(MembershipService::class)->validateL1($m->fresh(), $this->treasurer);
+        }
+        $previous = RotationRound::where('campaign_id', $c->id)->orderBy('round_number')->get();
+        $order = $previous->map(fn ($r) => $byUser[Membership::find($r->beneficiary_membership_id)->user_id]->id)->all();
+        $this->at(-31, 16);
+        $assign->assign($cycle2->fresh(), $order, 'manual', null);
+        $this->at(-29, 9);
+        $assign->start($cycle2->fresh(), $this->super);
+
+        foreach ($byUser as $m) {
+            foreach (Installment::where('membership_id', $m->id)->orderBy('sequence_number')->get() as $k => $inst) {
+                $offset = $this->offsetOf($inst->due_date);
+                if ($offset >= 0) {
+                    continue;
+                }
+                $this->at($offset, 9 + $k % 5);
+                $k % 2 ? $this->payMomo($m, (int) $inst->amount_minor, PaymentChannel::Moov) : $this->payCash($m, (int) $inst->amount_minor, 'Cotisation tontine');
+            }
+        }
+        foreach (RotationRound::where('campaign_id', $cycle2->id)->orderBy('round_number')->get() as $round) {
+            $offset = $this->offsetOf($round->scheduled_date);
+            if ($offset > -14) {
+                continue;
+            }
+            $this->at($offset, 17);
+            $round = $payouts->approve($round->fresh(), $this->manager, null, null);
+            $this->at($offset + 1, 10);
+            $payouts->initiate($round->fresh(), 'cash', null, (string) Str::uuid(), $this->admin);
+            $payouts->confirm($round->fresh(), 'REMISE-GANHI2-' . $round->round_number, $this->admin);
         }
     }
 
