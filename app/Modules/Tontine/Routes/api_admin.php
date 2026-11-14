@@ -68,6 +68,11 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::get('/',                   [AdminCampaignController::class, 'index']);
             Route::get('/{campaign}',         [AdminCampaignController::class, 'show']);
             Route::get('/{campaign}/preview', [AdminCampaignController::class, 'installmentPreview']);
+            // EF-CAMP-05 — suivi des cotisations : qui a payé, qui n'a pas encore payé.
+            Route::get('/{campaign}/contributions/due-dates', [\App\Modules\Tontine\Http\Controllers\AdminContributionTrackingController::class, 'dueDates']);
+            Route::get('/{campaign}/contributions/grid',      [\App\Modules\Tontine\Http\Controllers\AdminContributionTrackingController::class, 'grid']);
+            Route::get('/{campaign}/contributions/export',    [\App\Modules\Tontine\Http\Controllers\AdminContributionTrackingController::class, 'export']);
+            Route::get('/{campaign}/contributions',           [\App\Modules\Tontine\Http\Controllers\AdminContributionTrackingController::class, 'byDueDate']);
         });
         Route::post('/',                      [AdminCampaignController::class, 'store'])
             ->middleware('permission:campaign.create');
