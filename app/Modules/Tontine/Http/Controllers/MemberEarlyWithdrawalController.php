@@ -54,6 +54,7 @@ class MemberEarlyWithdrawalController extends Controller
             $membership, (int) $data['amount_minor'], $data['reason'] ?? null,
             $data['payout_channel'], $data['payout_phone'] ?? null,
             $request->user(), 'member', $data['idempotency_key'],
+            $data['payout_network'] ?? null,
         );
 
         if ($withdrawal->wasRecentlyCreated) {

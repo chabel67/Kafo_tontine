@@ -82,7 +82,7 @@ class RotationPayoutService
             'approved_by'     => $round->approved_by,
             'override_reasons' => $round->override_reasons,
             'attempts'        => $round->attempts()->get()->map(fn (Attempt $a) => [
-                'id' => $a->id, 'attempt_no' => $a->attempt_no, 'status' => $a->status, 'channel' => $a->channel,
+                'id' => $a->id, 'attempt_no' => $a->attempt_no, 'status' => $a->status, 'channel' => $a->channel, 'network' => $a->network,
                 'amount_minor' => $a->amount_minor, 'failure_reason' => $a->failure_reason,
                 'initiated_at' => $a->initiated_at?->toIso8601String(), 'completed_at' => $a->completed_at?->toIso8601String(),
             ]),
@@ -138,7 +138,7 @@ class RotationPayoutService
         return $approved;
     }
 
-    public function initiate(RotationRound $round, string $channel, ?string $phone, string $idempotencyKey, User $actor): Attempt
+    public function initiate(RotationRound $round, string $channel, ?string $phone, string $idempotencyKey, User $actor, ?string $network = null): Attempt
     {
         if ($existing = Attempt::where('idempotency_key', $idempotencyKey)->first()) {
             if ($existing->rotation_round_id !== $round->id) {
@@ -147,7 +147,7 @@ class RotationPayoutService
             return $existing;
         }
 
-        return DB::transaction(function () use ($round, $channel, $phone, $idempotencyKey, $actor) {
+        return DB::transaction(function () use ($round, $channel, $phone, $idempotencyKey, $actor, $network) {
             $this->lockCampaign($round->campaign_id);
             $r = RotationRound::whereKey($round->id)->lockForUpdate()->firstOrFail();
 
@@ -173,6 +173,7 @@ class RotationPayoutService
                 'amount_minor'      => $r->netMinor(),
                 'channel'           => $channel,
                 'phone'             => $channel === 'cash' ? null : $phone,
+                'network'           => $channel === 'cash' ? null : $network,
                 'status'            => Attempt::PROCESSING,
                 'initiated_by'      => $actor->id,
                 'initiated_at'      => now(),

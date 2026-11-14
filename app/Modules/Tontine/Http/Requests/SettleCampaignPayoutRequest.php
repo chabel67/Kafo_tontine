@@ -15,7 +15,8 @@ class SettleCampaignPayoutRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'channel' => ['required', 'string', 'in:cash,mtn,orange,moov,wave'],
+            'channel' => ['required', 'string', \Illuminate\Validation\Rule::in(\App\Modules\Payments\Domain\Enums\PaymentChannel::values())],
+            'network' => ['nullable', 'required_unless:channel,cash', \Illuminate\Validation\Rule::in(\App\Modules\Payments\Domain\Enums\MobileNetwork::values())],
             'phone'   => ['nullable', 'string', 'regex:/^\+\d{7,15}$/'],
             // Anti double règlement : rejouer la même requête renvoie le payout réglé.
             'idempotency_key' => ['nullable', 'string', 'min:8', 'max:100'],

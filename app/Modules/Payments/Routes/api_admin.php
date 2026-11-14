@@ -7,6 +7,7 @@ use Illuminate\Support\Facades\Route;
 // Webhooks PSP (sans auth — signature vérifiée dans le handler)
 Route::post('/webhooks/psp/{channel}', [WebhookController::class, 'handle']);
 Route::post('/webhooks/kkiapay',       [WebhookController::class, 'handleKkiapay']);
+Route::post('/webhooks/fedapay',       [WebhookController::class, 'handleFedapay']);
 
 // B-13 — permissions (matrice RolesSeeder). Pas de route « unblock » à ce jour
 // (`payment.unblock` est seedée mais sans endpoint).

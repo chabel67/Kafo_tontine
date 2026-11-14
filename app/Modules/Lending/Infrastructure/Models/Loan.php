@@ -26,7 +26,7 @@ class Loan extends Model
         'interest_rate_bps', 'interest_total_minor',
         'periodicity', 'installments_count',
         'first_due_date', 'next_due_date', 'custom_due_dates',
-        'disbursed_channel', 'disbursed_phone',
+        'disbursed_channel', 'disbursed_phone', 'disbursed_network',
         'disbursed_by', 'disbursed_at',
         'written_off_by', 'written_off_at', 'written_off_reason',
     ];

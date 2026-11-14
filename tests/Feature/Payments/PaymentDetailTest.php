@@ -59,7 +59,7 @@ class PaymentDetailTest extends TestCase
         $this->actingAsStaff('super_admin');
 
         $id = $this->postJson('/api/admin/payments/momo', [
-            'membership_id' => $membership->id, 'channel' => 'mtn',
+            'membership_id' => $membership->id, 'channel' => 'kkiapay',
             'amount_minor'  => $membership->committed_amount_minor, 'phone' => '+22997000000',
         ])->json('data.id') ?? $this->markTestSkipped('Initiation MoMo staff indisponible dans ce contexte.');
 
@@ -79,7 +79,7 @@ class PaymentDetailTest extends TestCase
         $membership = $this->membership($member);
         $payment    = \App\Modules\Payments\Infrastructure\Models\Payment::create([
             'reference' => 'PAY-TEST-000001', 'idempotency_key' => (string) \Illuminate\Support\Str::uuid(),
-            'membership_id' => $membership->id, 'channel' => 'mtn', 'status' => 'pending',
+            'membership_id' => $membership->id, 'channel' => 'kkiapay', 'status' => 'pending',
             'amount_minor' => 5000, 'created_by' => $member->id,
         ]);
         $this->actingAsStaff('treasurer');

@@ -47,9 +47,9 @@ class DevLendingSeeder extends Seeder
 
         // ── Comptes ledger partagés ─────────────────────────────────────────
         $this->ledger->openAccount('CASH_BOX',          AccountType::CashBox,   description: 'Caisse physique');
-        $this->ledger->openAccount('MOMO_FLOAT:MTN',    AccountType::MomoFloat, description: 'Float MTN MoMo');
-        $this->ledger->openAccount('MOMO_FLOAT:ORANGE', AccountType::MomoFloat, description: 'Float Orange Money');
-        $this->ledger->openAccount('MOMO_FLOAT:MOOV',   AccountType::MomoFloat, description: 'Float Moov Money');
+        // DA-20 : un compte par agrégateur (le solde réel est chez l'agrégateur).
+        $this->ledger->openAccount('PSP_FLOAT:KKIAPAY', AccountType::PspFloat, description: 'Solde KKiaPay');
+        $this->ledger->openAccount('PSP_FLOAT:FEDAPAY', AccountType::PspFloat, description: 'Solde FedaPay');
         $this->ledger->openAccount('EXPENSE_LOSS',      AccountType::ExpenseLoss, description: 'Pertes write-off');
 
         // ── Calendriers ─────────────────────────────────────────────────────
@@ -361,7 +361,7 @@ class DevLendingSeeder extends Seeder
         $this->ledger->openAccount($savingsKey, AccountType::MemberSavings, ownerId: $userId, description: "Épargne {$p['name']}");
 
         // ── Échéances + écritures ledger ──────────────────────────────────────
-        $channels = ['CASH_BOX', 'MOMO_FLOAT:MTN', 'MOMO_FLOAT:ORANGE', 'MOMO_FLOAT:MOOV'];
+        $channels = ['CASH_BOX', 'PSP_FLOAT:KKIAPAY', 'PSP_FLOAT:FEDAPAY'];
         for ($seq = 1; $seq <= $totalInstall; $seq++) {
             $dueDate   = $activatedAt->copy()->addDays(($seq - 1) * $cadenceDays);
             $graceEnds = $dueDate->copy()->addDays(3);
@@ -470,7 +470,7 @@ class DevLendingSeeder extends Seeder
         $repaid      = $amount - $outstanding;
 
         $reqId  = $this->insertRequest($mid, $uid, $savings, $trust, $coeff, $amount, $p['purpose'] ?? null, 'disbursed', daysAgo: 10);
-        $loanId = $this->createLoan($reqId, $mid, $uid, $amount, $outstanding, 'active', 'mtn');
+        $loanId = $this->createLoan($reqId, $mid, $uid, $amount, $outstanding, 'active', 'kkiapay');
         $this->postDisbursement($loanId, $amount, $uid);
 
         if ($repaid > 0) {
@@ -487,10 +487,10 @@ class DevLendingSeeder extends Seeder
 
         $reqId  = $this->insertRequest($mid, $uid, $savings, $trust, $coeff, $amount, $p['purpose'] ?? null, 'disbursed', daysAgo: 15);
         $loanId = $this->createLoan($reqId, $mid, $uid, $amount, $outstanding, 'active', 'orange');
-        $this->postDisbursement($loanId, $amount, $uid, 'MOMO_FLOAT:ORANGE');
+        $this->postDisbursement($loanId, $amount, $uid, 'PSP_FLOAT:FEDAPAY');
 
         foreach ($repayments as $i => $repayAmount) {
-            $channel = ($i % 2 === 0) ? 'cash' : 'mtn';
+            $channel = ($i % 2 === 0) ? 'cash' : 'kkiapay';
             $this->postRepayment($loanId, $repayAmount, $channel, $uid, "Remboursement " . ($i + 1));
         }
     }
@@ -500,7 +500,7 @@ class DevLendingSeeder extends Seeder
         // Prêt passé (remboursé il y a 20 jours)
         $oldAmount = (int) ($p['loan_amount_old'] ?? 50_000);
         $reqOldId  = $this->insertRequest($mid, $uid, $savings, $trust, $coeff, $oldAmount, $p['purpose_old'] ?? null, 'disbursed', daysAgo: 30);
-        $loanOldId = $this->createLoan($reqOldId, $mid, $uid, $oldAmount, 0, 'repaid', 'mtn', daysAgo: 28);
+        $loanOldId = $this->createLoan($reqOldId, $mid, $uid, $oldAmount, 0, 'repaid', 'kkiapay', daysAgo: 28);
         $this->postDisbursement($loanOldId, $oldAmount, $uid);
         $this->postRepayment($loanOldId, $oldAmount, 'cash', $uid, 'Remboursement intégral', daysAgo: 20);
 
@@ -517,7 +517,7 @@ class DevLendingSeeder extends Seeder
             $daysAgoDisb = 60 - ($i * 25);
             $daysAgoRepay = $daysAgoDisb - 15;
             $reqOldId  = $this->insertRequest($mid, $uid, $savings, $trust, $coeff, $oldAmount, $purposes[$i] ?? null, 'disbursed', daysAgo: $daysAgoDisb + 2);
-            $loanOldId = $this->createLoan($reqOldId, $mid, $uid, $oldAmount, 0, 'repaid', 'mtn', daysAgo: $daysAgoDisb);
+            $loanOldId = $this->createLoan($reqOldId, $mid, $uid, $oldAmount, 0, 'repaid', 'kkiapay', daysAgo: $daysAgoDisb);
             $this->postDisbursement($loanOldId, $oldAmount, $uid);
             $this->postRepayment($loanOldId, $oldAmount, 'cash', $uid, 'Remboursement intégral', daysAgo: $daysAgoRepay);
         }
@@ -531,7 +531,7 @@ class DevLendingSeeder extends Seeder
 
         $reqId  = $this->insertRequest($mid, $uid, $savings, $trust, $coeff, $amount, $p['purpose'] ?? null, 'disbursed', daysAgo: 20);
         $loanId = $this->createLoan($reqId, $mid, $uid, $amount, 0, 'written_off', 'moov', daysAgo: 18);
-        $this->postDisbursement($loanId, $amount, $uid, 'MOMO_FLOAT:MOOV');
+        $this->postDisbursement($loanId, $amount, $uid, 'PSP_FLOAT:KKIAPAY');
 
         // Écriture write-off
         $receivableKey = "LOAN_RECEIVABLE:{$loanId}";
@@ -626,7 +626,7 @@ class DevLendingSeeder extends Seeder
         return $loanId;
     }
 
-    private function postDisbursement(string $loanId, int $amount, string $uid, string $floatKey = 'MOMO_FLOAT:MTN'): void
+    private function postDisbursement(string $loanId, int $amount, string $uid, string $floatKey = 'PSP_FLOAT:KKIAPAY'): void
     {
         $this->ledger->post(
             legs: [

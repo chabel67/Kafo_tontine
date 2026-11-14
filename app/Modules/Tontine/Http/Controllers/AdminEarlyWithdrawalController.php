@@ -206,6 +206,7 @@ class AdminEarlyWithdrawalController extends Controller
             $membership, (int) $data['amount_minor'], $data['reason'] ?? null,
             $data['payout_channel'], $data['payout_phone'] ?? null,
             $request->user(), 'staff', $data['idempotency_key'],
+            $data['payout_network'] ?? null,
         );
 
         if ($withdrawal->wasRecentlyCreated) {
@@ -265,7 +266,7 @@ class AdminEarlyWithdrawalController extends Controller
     public function initiatePayout(InitiateWithdrawalPayoutRequest $request, EarlyWithdrawal $withdrawal): JsonResponse
     {
         $data    = $request->validated();
-        $attempt = $this->withdrawals->initiatePayout($withdrawal, $data['channel'], $data['phone'] ?? null, $data['idempotency_key'], $request->user());
+        $attempt = $this->withdrawals->initiatePayout($withdrawal, $data['channel'], $data['phone'] ?? null, $data['idempotency_key'], $request->user(), $data['network'] ?? null);
 
         if ($attempt->wasRecentlyCreated) {
             $this->log($request, 'payout_initiate', $withdrawal, [], [

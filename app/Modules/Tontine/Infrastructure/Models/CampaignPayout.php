@@ -18,7 +18,7 @@ class CampaignPayout extends Model
         'reference', 'idempotency_key', 'campaign_id', 'membership_id',
         'savings_minor', 'advance_offset_minor', 'withdrawals_disbursed_minor', 'net_amount_minor',
         'loan_repayment_minor', 'loan_repayment_id', 'ledger_transaction_id',
-        'status', 'settled_channel', 'settled_phone',
+        'status', 'settled_channel', 'settled_phone', 'settled_network',
         'settled_at', 'settled_by', 'cancelled_reason',
         'metadata',
     ];

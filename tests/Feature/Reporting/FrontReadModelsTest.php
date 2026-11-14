@@ -122,12 +122,14 @@ class FrontReadModelsTest extends TestCase
         $membership = $this->membership($this->member(['full_name' => 'Chantal Agossou']), $campaign);
         $this->creditSavings($membership, 10000);
         app(LedgerService::class)->openAccount('MOMO_FLOAT:MTN', AccountType::MomoFloat);
+        app(LedgerService::class)->openAccount('PSP_FLOAT:KKIAPAY', AccountType::PspFloat);
 
         $this->actingAsStaff('admin');
         $accounts = collect($this->getJson('/api/admin/ledger/accounts')->assertOk()->json('data'))->keyBy('key');
 
         $this->assertSame('Caisse espèces', $accounts['CASH_BOX']['account_label']);
-        $this->assertSame('MoMo MTN', $accounts['MOMO_FLOAT:MTN']['account_label']);
+        $this->assertSame('MoMo MTN (ancien)', $accounts['MOMO_FLOAT:MTN']['account_label']);
+        $this->assertSame('Solde KKiaPay', $accounts['PSP_FLOAT:KKIAPAY']['account_label']);
         $this->assertSame('Épargne — Chantal Agossou · Tontine Zogbo', $accounts["MEMBER_SAVINGS:{$membership->id}"]['account_label']);
 
         $entries = $this->getJson('/api/admin/ledger/accounts/' . urlencode("MEMBER_SAVINGS:{$membership->id}") . '/entries')->assertOk();

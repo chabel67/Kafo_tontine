@@ -44,6 +44,23 @@ return [
         'api_url'         => env('KKIAPAY_API_URL', 'https://api.kkiapay.me'),
         'sandbox_api_url' => env('KKIAPAY_SANDBOX_API_URL', 'https://api-sandbox.kkiapay.me'),
         'timeout'         => (int) env('KKIAPAY_TIMEOUT', 15),
+        // Réseaux couverts (affichage seulement — le widget choisit le réseau).
+        'networks'        => array_filter(explode(',', env('KKIAPAY_NETWORKS', 'mtn,moov'))),
+    ],
+
+    // DA-20 : FedaPay, second agrégateur (transaction créée côté serveur, page de paiement FedaPay).
+    'fedapay' => [
+        'public_key'        => env('FEDAPAY_PUBLIC_KEY'),
+        'secret_key'        => env('FEDAPAY_SECRET_KEY'),
+        'webhook_secret'    => env('FEDAPAY_WEBHOOK_SECRET'),
+        'sandbox'           => (bool) env('FEDAPAY_SANDBOX', true),
+        'api_url'           => env('FEDAPAY_API_URL', 'https://api.fedapay.com/v1'),
+        'sandbox_api_url'   => env('FEDAPAY_SANDBOX_API_URL', 'https://sandbox-api.fedapay.com/v1'),
+        'timeout'           => (int) env('FEDAPAY_TIMEOUT', 15),
+        'webhook_tolerance' => (int) env('FEDAPAY_WEBHOOK_TOLERANCE', 300),
+        // Page de l'app membre où FedaPay renvoie après paiement (?payment={id} ajouté).
+        'return_url'        => env('FEDAPAY_RETURN_URL'),
+        'networks'          => array_filter(explode(',', env('FEDAPAY_NETWORKS', 'mtn,moov,celtiis'))),
     ],
 
 ];

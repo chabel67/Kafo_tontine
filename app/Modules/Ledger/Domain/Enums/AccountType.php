@@ -6,7 +6,10 @@ enum AccountType: string
 {
     case MemberSavings       = 'MEMBER_SAVINGS';
     case CashBox             = 'CASH_BOX';
+    // Ancien float par réseau (avant DA-20) — historique uniquement, plus d'écriture.
     case MomoFloat           = 'MOMO_FLOAT';
+    // Solde chez un agrégateur de paiement (DA-20) : PSP_FLOAT:KKIAPAY, PSP_FLOAT:FEDAPAY.
+    case PspFloat            = 'PSP_FLOAT';
     case Equity              = 'EQUITY';
     case RevenueInterest     = 'REVENUE_INTEREST';
     case PenaltyIncome       = 'PENALTY_INCOME';
@@ -26,7 +29,8 @@ enum AccountType: string
         return match($this) {
             self::MemberSavings      => 'Épargne membre',
             self::CashBox            => 'Caisse physique',
-            self::MomoFloat          => 'Float Mobile Money',
+            self::MomoFloat          => 'Float Mobile Money (ancien)',
+            self::PspFloat           => 'Solde agrégateur de paiement',
             self::Equity             => 'Capitaux propres',
             self::RevenueInterest    => 'Revenus intérêts',
             self::PenaltyIncome      => 'Revenus pénalités',
@@ -52,7 +56,7 @@ enum AccountType: string
     public function isAsset(): bool
     {
         return in_array($this, [
-            self::CashBox, self::MomoFloat, self::LoanReceivable,
+            self::CashBox, self::MomoFloat, self::PspFloat, self::LoanReceivable,
         ]);
     }
 }

@@ -35,10 +35,10 @@ class RotationCashOutService
         private readonly NotificationService     $notifications,
     ) {}
 
-    public function initiateDepartureRefund(RotationDeparture $departure, string $channel, ?string $phone, string $key, User $actor): Attempt
+    public function initiateDepartureRefund(RotationDeparture $departure, string $channel, ?string $phone, string $key, User $actor, ?string $network = null): Attempt
     {
         return $this->initiate(Attempt::KIND_DEPARTURE, $departure->campaign_id, $departure->membership_id, $departure->refund_minor,
-            $channel, $phone, $key, $actor, $departure->reason, function () use ($departure, $actor) {
+            $channel, $phone, $key, $actor, $departure->reason, $network, function () use ($departure, $actor) {
                 $d = RotationDeparture::whereKey($departure->id)->lockForUpdate()->firstOrFail();
                 if (! in_array($d->status, [RotationDeparture::PENDING, RotationDeparture::REFUNDING], true) || $d->refund_minor <= 0) {
                     throw new TontineRuleException('Ce départ n\'a pas de remboursement à verser.', 'departure_not_refundable', 422);
@@ -55,13 +55,13 @@ class RotationCashOutService
             });
     }
 
-    public function initiateSurplus(Campaign $campaign, Membership $membership, int $amount, string $reason, string $channel, ?string $phone, string $key, User $actor): Attempt
+    public function initiateSurplus(Campaign $campaign, Membership $membership, int $amount, string $reason, string $channel, ?string $phone, string $key, User $actor, ?string $network = null): Attempt
     {
         if ($membership->campaign_id !== $campaign->id) {
             throw new TontineRuleException('Ce membre ne fait pas partie de cette tontine.', 'not_a_member', 422);
         }
 
-        return $this->initiate(Attempt::KIND_SURPLUS, $campaign->id, $membership->id, $amount, $channel, $phone, $key, $actor, $reason,
+        return $this->initiate(Attempt::KIND_SURPLUS, $campaign->id, $membership->id, $amount, $channel, $phone, $key, $actor, $reason, $network,
             function () use ($campaign) {
                 if ($campaign->rounds()->whereNotIn('status', [RotationRoundStatus::Completed->value, RotationRoundStatus::Vacant->value])->exists()) {
                     throw new TontineRuleException('Le reliquat se répartit une fois tous les tours traités.', 'rounds_not_finished', 422);
@@ -153,7 +153,7 @@ class RotationCashOutService
     }
 
     private function initiate(string $kind, string $campaignId, string $membershipId, int $amount, string $channel, ?string $phone,
-        string $key, User $actor, string $reason, callable $guard): Attempt
+        string $key, User $actor, string $reason, ?string $network, callable $guard): Attempt
     {
         if ($existing = Attempt::where('idempotency_key', $key)->first()) {
             if ($existing->kind !== $kind || $existing->membership_id !== $membershipId) {
@@ -165,7 +165,7 @@ class RotationCashOutService
             throw new TontineRuleException('Le montant doit être supérieur à zéro.', 'invalid_amount', 422);
         }
 
-        return DB::transaction(function () use ($kind, $campaignId, $membershipId, $amount, $channel, $phone, $key, $actor, $reason, $guard) {
+        return DB::transaction(function () use ($kind, $campaignId, $membershipId, $amount, $channel, $phone, $key, $actor, $reason, $network, $guard) {
             Campaign::whereKey($campaignId)->lockForUpdate()->firstOrFail();
             $extra = $guard();
 
@@ -185,6 +185,7 @@ class RotationCashOutService
                 'reason'          => $reason,
                 'channel'         => $channel,
                 'phone'           => $channel === 'cash' ? null : $phone,
+                'network'         => $channel === 'cash' ? null : $network,
                 'status'          => Attempt::PROCESSING,
                 'initiated_by'    => $actor->id,
                 'initiated_at'    => now(),

@@ -138,7 +138,7 @@ class CashPaymentRulesTest extends TestCase
             'reference'       => 'PAY-TEST-' . Str::random(6),
             'idempotency_key' => (string) Str::uuid(),
             'membership_id'   => $this->membership->id,
-            'channel'         => 'mtn',
+            'channel'         => 'kkiapay',
             'status'          => 'pending',
             'amount_minor'    => 5000,
             'phone'           => '+2290197000077',

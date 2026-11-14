@@ -2,10 +2,10 @@
 
 namespace App\Modules\Payments\Http\Controllers;
 
-use App\Modules\Payments\Domain\Contracts\PspDriver;
 use App\Modules\Payments\Domain\Enums\PaymentChannel;
 use App\Modules\Payments\Domain\Enums\PaymentStatus;
 use App\Modules\Payments\Infrastructure\Models\Payment;
+use App\Modules\Payments\Infrastructure\Psp\PspRegistry;
 use App\Modules\Tontine\Domain\Enums\MembershipStatus;
 use App\Modules\Tontine\Infrastructure\Models\Membership;
 use App\Shared\ApiResponse;
@@ -17,7 +17,19 @@ use Illuminate\Validation\Rules\Enum;
 
 class MemberPaymentController extends Controller
 {
-    public function __construct(private readonly PspDriver $psp) {}
+    public function __construct(private readonly PspRegistry $psps) {}
+
+    /**
+     * GET /member/payment-methods — agrégateurs avec lesquels le membre peut cotiser
+     * (configurés et activés), avec les réseaux couverts (DA-20).
+     */
+    public function methods(): JsonResponse
+    {
+        return ApiResponse::success(array_map(
+            fn (PaymentChannel $c) => \Illuminate\Support\Arr::only($this->psps->describe($c), ['channel', 'label', 'networks', 'mode']),
+            $this->psps->available(),
+        ));
+    }
 
     public function initiate(Request $request): JsonResponse
     {
@@ -29,17 +41,18 @@ class MemberPaymentController extends Controller
             'idempotency_key' => ['nullable', 'string', 'max:100'],
         ]);
 
-        // DA-13 : seul un canal MoMo routé par KKiaPay (MTN, Moov) s'initie depuis l'app.
-        // Les espèces se remettent au trésorier ; Orange et Wave ne sont pas routés.
+        // DA-20 : on cotise en ligne avec un agrégateur configuré et activé. Les espèces
+        // se remettent au trésorier.
         $channel = PaymentChannel::from($data['channel']);
-        if (! $channel->isMomo() || ! $channel->isRoutedByPsp()) {
+        if (! $this->psps->isAvailable($channel)) {
+            $supported = array_map(fn (PaymentChannel $c) => $c->value, $this->psps->available());
             return ApiResponse::error(
                 'channel_not_supported',
                 $channel === PaymentChannel::Cash
                     ? 'Le paiement en espèces se fait auprès de votre trésorier, pas depuis l\'application.'
-                    : "{$channel->label()} n'est pas disponible pour cotiser en ligne. Choisissez MTN MoMo ou Moov Money.",
+                    : "{$channel->label()} n'est pas disponible pour cotiser en ligne pour le moment.",
                 422,
-                ['details' => ['channel' => $channel->value, 'supported_channels' => ['mtn', 'moov']]],
+                ['details' => ['channel' => $channel->value, 'supported_channels' => $supported]],
             );
         }
 
@@ -57,7 +70,7 @@ class MemberPaymentController extends Controller
 
         $existing = Payment::where('idempotency_key', $idempotencyKey)->first();
         if ($existing) {
-            return ApiResponse::success($this->formatWithCheckout($existing));
+            return $this->respondWithCheckout($existing, created: false);
         }
 
         $reference = \App\Shared\Reference::next('PAY', \App\Shared\Reference::PAY);
@@ -73,7 +86,7 @@ class MemberPaymentController extends Controller
             'created_by'      => $request->user()->id,
         ]);
 
-        return ApiResponse::created($this->formatWithCheckout($payment));
+        return $this->respondWithCheckout($payment, created: true);
     }
 
     public function transactions(Request $request): JsonResponse
@@ -98,6 +111,7 @@ class MemberPaymentController extends Controller
             'type'         => 'debit',
             'status'       => $p->status->value,
             'channel'      => $p->channel->value,
+            'network'      => $p->network,
         ]);
 
         return ApiResponse::success($items, meta: [
@@ -108,12 +122,32 @@ class MemberPaymentController extends Controller
         ]);
     }
 
+    /**
+     * L'agrégateur peut être injoignable (FedaPay crée la transaction côté serveur) :
+     * le paiement reste en attente, et rejouer la même clé d'idempotence réessaie.
+     */
+    private function respondWithCheckout(Payment $p, bool $created): JsonResponse
+    {
+        try {
+            $body = $this->formatWithCheckout($p);
+        } catch (\RuntimeException $e) {
+            \Illuminate\Support\Facades\Log::error('Checkout agrégateur impossible', [
+                'payment_id' => $p->id, 'channel' => $p->channel->value, 'error' => $e->getMessage(),
+            ]);
+            return ApiResponse::error('psp_checkout_failed',
+                "{$p->channel->label()} ne répond pas pour le moment. Réessayez dans quelques instants.", 502,
+                ['details' => ['payment_id' => $p->id]]);
+        }
+
+        return $created ? ApiResponse::created($body) : ApiResponse::success($body);
+    }
+
     private function formatWithCheckout(Payment $p): array
     {
         $out = $this->formatPayment($p);
 
-        if ($p->channel->isMomo() && $p->status === PaymentStatus::Pending) {
-            $out['checkout'] = $this->psp->prepareCheckout($p)->toArray();
+        if ($p->channel->isPsp() && $p->status === PaymentStatus::Pending && $this->psps->has($p->channel)) {
+            $out['checkout'] = $this->psps->driver($p->channel)->prepareCheckout($p)->toArray();
         }
 
         return $out;
@@ -127,6 +161,7 @@ class MemberPaymentController extends Controller
             'status'       => $p->status->value,
             'amount_minor' => $p->amount_minor,
             'channel'      => $p->channel->value,
+            'network'      => $p->network,
             'created_at'   => $p->created_at->toIso8601String(),
         ];
     }

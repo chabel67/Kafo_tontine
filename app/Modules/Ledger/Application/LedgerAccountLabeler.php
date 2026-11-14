@@ -99,9 +99,14 @@ class LedgerAccountLabeler
             return 'Caisse espèces';
         }
 
+        if ($type === AccountType::PspFloat) {
+            $psp = \App\Modules\Payments\Domain\Enums\PaymentChannel::tryFrom(strtolower((string) $suffix));
+            return 'Solde ' . ($psp?->label() ?? strtoupper((string) $suffix));
+        }
+
         if ($type === AccountType::MomoFloat) {
             $operator = strtoupper((string) $suffix);
-            return self::MOMO_LABELS[$operator] ?? ('Mobile Money ' . ($operator ?: ''));
+            return (self::MOMO_LABELS[$operator] ?? ('Mobile Money ' . ($operator ?: ''))) . ' (ancien)';
         }
 
         if ($type && $suffix && isset($resolved[$type->value][$suffix])) {

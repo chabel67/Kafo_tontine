@@ -100,6 +100,7 @@ class MemberLoanController extends Controller
                 'status'            => $loan->status->value,
                 'disbursed_at'      => $loan->disbursed_at?->toDateString(),
                 'disbursed_channel' => $loan->disbursed_channel,
+                'disbursed_network' => $loan->disbursed_network,
                 'campaign_name'     => $loan->membership?->campaign?->name ?? 'Prêt communautaire',
                 'repayments'        => $loan->repayments
                     ->sortByDesc('created_at')

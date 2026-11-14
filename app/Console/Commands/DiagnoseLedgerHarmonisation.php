@@ -36,6 +36,13 @@ class DiagnoseLedgerHarmonisation extends Command
             $this->warn(count($nonCanonical) . ' compte(s) hors convention : leur solde doit être transféré vers la clé en majuscules par une écriture de transfert (à valider).');
         }
 
+        // 1 bis. DA-20 : les anciens floats par réseau ne doivent plus porter de solde.
+        $legacy = array_filter($momo, fn ($r) => (int) $r->balance !== 0);
+        if ($legacy) {
+            $problems++;
+            $this->warn(count($legacy) . ' ancien(s) compte(s) MOMO_FLOAT avec un solde : lancer `php artisan kafo:migrate-psp-treasury` (aperçu) puis `--execute` pour transférer vers PSP_FLOAT:KKIAPAY.');
+        }
+
         // 2. Contre-passations multiples (bloqueraient l'index unique sur reverses_id).
         $this->line("\n<comment>2. Transactions contre-passées plusieurs fois</comment>");
         $dups = DB::select("SELECT reverses_id, COUNT(*) AS n FROM ledger_transactions WHERE reverses_id IS NOT NULL GROUP BY reverses_id HAVING COUNT(*) > 1");

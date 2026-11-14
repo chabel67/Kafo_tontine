@@ -13,6 +13,7 @@ class PaymentResource extends JsonResource
             'id'              => $this->id,
             'reference'       => $this->reference,
             'channel'         => $this->channel?->value,
+            'network'         => $this->network,
             'purpose'         => $this->purpose ?? 'contribution',
             'channel_label'   => $this->channel?->label(),
             'status'          => $this->status?->value,

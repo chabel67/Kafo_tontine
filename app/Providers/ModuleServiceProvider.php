@@ -89,9 +89,11 @@ class ModuleServiceProvider extends ServiceProvider
             $app->make(LedgerService::class),
             $app->make(\App\Modules\Audit\Application\CashRegisterService::class),
         ));
-        $this->app->singleton(PspDriver::class, fn ($app) => new KkiapayDriver(
-            $app['config']->get('services.kkiapay', []),
-        ));
+        // DA-20 : un driver par agrégateur ; le moyen de paiement choisit le driver.
+        $this->app->singleton(\App\Modules\Payments\Infrastructure\Psp\PspRegistry::class, fn ($app) => new \App\Modules\Payments\Infrastructure\Psp\PspRegistry([
+            'kkiapay' => new KkiapayDriver($app['config']->get('services.kkiapay', [])),
+            'fedapay' => new \App\Modules\Payments\Infrastructure\Psp\FedapayDriver($app['config']->get('services.fedapay', [])),
+        ]));
 
         // Lending
         $this->app->singleton(EligibilityService::class, fn ($app) => new EligibilityService(

@@ -166,7 +166,8 @@ class AdminLoanController extends Controller
     public function disburse(Request $request, LoanRequest $loanRequest): JsonResponse
     {
         $data = $request->validate([
-            'channel' => ['required', 'string', 'in:cash,mtn,orange,moov,wave'],
+            'channel' => ['required', 'string', \Illuminate\Validation\Rule::in(\App\Modules\Payments\Domain\Enums\PaymentChannel::values())],
+            'network' => ['nullable', 'required_unless:channel,cash', \Illuminate\Validation\Rule::in(\App\Modules\Payments\Domain\Enums\MobileNetwork::values())],
             'phone'   => ['nullable', 'string', 'regex:/^\+\d{7,15}$/'],
         ]);
 
@@ -175,6 +176,7 @@ class AdminLoanController extends Controller
             $request->user()->id,
             $data['channel'],
             $data['phone'] ?? null,
+            $data['channel'] === 'cash' ? null : ($data['network'] ?? null),
         );
 
         $this->audit->logFromRequest($request, 'loan.disburse', 'loan', $loan->id,
@@ -263,7 +265,7 @@ class AdminLoanController extends Controller
     {
         $data = $request->validate([
             'amount_minor' => ['required', 'integer', 'min:1'],
-            'channel'      => ['required', 'string', 'in:cash,mtn,orange,moov,wave'],
+            'channel'      => ['required', 'string', \Illuminate\Validation\Rule::in(\App\Modules\Payments\Domain\Enums\PaymentChannel::values())],
             'notes'           => ['nullable', 'string', 'max:500'],
             'idempotency_key' => ['nullable', 'string', 'min:8', 'max:100'],
         ]);

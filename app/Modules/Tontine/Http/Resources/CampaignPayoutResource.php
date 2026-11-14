@@ -26,6 +26,7 @@ class CampaignPayoutResource extends JsonResource
             'status_label'          => $this->status?->label(),
             'settled_channel'       => $this->settled_channel,
             'settled_phone'         => $this->settled_phone,
+            'settled_network'       => $this->settled_network,
             'settled_at'            => $this->settled_at?->toIso8601String(),
             'cancelled_reason'      => $this->cancelled_reason,
             'metadata'              => $this->metadata,

@@ -108,6 +108,7 @@ class AdminCampaignPayoutController extends Controller
             $request->user(),
             $data['idempotency_key'] ?? null,
             $data['loan_repayment'] ?? null,
+            $data['channel'] === 'cash' ? null : ($data['network'] ?? null),
         );
 
         // Un rejeu idempotent ne produit pas une seconde entrée d'audit.

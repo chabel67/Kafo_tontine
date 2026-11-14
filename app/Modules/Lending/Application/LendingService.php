@@ -174,8 +174,9 @@ class LendingService
         string $disbursedById,
         string $channel,
         ?string $phone,
+        ?string $network = null,
     ): Loan {
-        $loan = DB::transaction(function () use ($request, $disbursedById, $channel, $phone) {
+        $loan = DB::transaction(function () use ($request, $disbursedById, $channel, $phone, $network) {
             // Avance : campagne toujours active et adhésion verrouillée (ordre de la clôture).
             $membership = $this->lockMembershipOf($request);
 
@@ -208,6 +209,7 @@ class LendingService
                 'custom_due_dates'   => $request->custom_due_dates,
                 'disbursed_channel'  => $channel,
                 'disbursed_phone'    => $phone,
+                'disbursed_network'  => $channel === 'cash' ? null : $network,
                 'disbursed_by'       => $disbursedById,
                 'disbursed_at'       => now(),
             ]);

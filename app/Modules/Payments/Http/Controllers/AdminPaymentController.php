@@ -267,7 +267,7 @@ class AdminPaymentController extends Controller
         $data = $request->validate([
             'membership_id' => ['required', 'uuid', 'exists:memberships,id'],
             'amount_minor'  => ['required', 'integer', 'min:1'],
-            'channel'       => ['required', 'string', Rule::in(['mtn', 'orange', 'moov', 'wave'])],
+            'channel'       => ['required', 'string', Rule::in(array_map(fn ($c) => $c->value, \App\Modules\Payments\Domain\Enums\PaymentChannel::psps()))],
             'phone'         => ['required', 'string', 'regex:/^\+\d{7,15}$/'],
         ]);
 

@@ -5,13 +5,17 @@ namespace App\Modules\Payments\Infrastructure\Psp;
 use App\Modules\Payments\Domain\Contracts\PspDriver;
 use App\Modules\Payments\Domain\Dto\CheckoutContext;
 use App\Modules\Payments\Domain\Dto\PspVerification;
+use App\Modules\Payments\Domain\Dto\PspWebhookEvent;
+use App\Modules\Payments\Domain\Enums\PaymentChannel;
+use App\Modules\Payments\Domain\Exceptions\InvalidWebhookSignatureException;
 use App\Modules\Payments\Infrastructure\Models\Payment;
 use Illuminate\Http\Client\RequestException;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Http;
 use RuntimeException;
 
 /**
- * KKiaPay = agrégateur Mobile Money (MTN + Moov officiels).
+ * KKiaPay = agrégateur Mobile Money (réseaux couverts : `services.kkiapay.networks`).
  *
  * Flow :
  *  - prepareCheckout()  : retourne les paramètres du widget côté client (le SDK
@@ -28,7 +32,79 @@ class KkiapayDriver implements PspDriver
 {
     public const PROVIDER = 'kkiapay';
 
+    private const REQUIRED_KEYS = ['public_key', 'private_key', 'secret', 'webhook_secret'];
+
     public function __construct(private readonly array $config) {}
+
+    public function channel(): PaymentChannel
+    {
+        return PaymentChannel::Kkiapay;
+    }
+
+    public function isConfigured(): bool
+    {
+        foreach (self::REQUIRED_KEYS as $k) {
+            if (empty($this->config[$k])) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    public function networks(): array
+    {
+        return array_values($this->config['networks'] ?? ['mtn', 'moov']);
+    }
+
+    public function isSandbox(): bool
+    {
+        return (bool) ($this->config['sandbox'] ?? true);
+    }
+
+    /**
+     * Sécurité (doc KKiaPay) : header `x-kkiapay-secret` comparé en temps constant au
+     * secret du tableau de bord — pas de HMAC. Retry KKiaPay : 5 tentatives si non-2xx.
+     *
+     * Payload : { transactionId, isPaymentSucces, amount, method,
+     *             stateData: { payment_id, reference, idempotency_key }, failureCode?, failureMessage? }
+     */
+    public function parseWebhook(Request $request): PspWebhookEvent
+    {
+        $expected = (string) ($this->config['webhook_secret'] ?? '');
+        $received = (string) $request->header('x-kkiapay-secret', '');
+        if ($expected === '' || ! hash_equals($expected, $received)) {
+            throw new InvalidWebhookSignatureException('Signature webhook KKiaPay invalide.');
+        }
+
+        $data = $request->validate([
+            'transactionId'   => ['required', 'string'],
+            'isPaymentSucces' => ['required', 'boolean'],
+            'amount'          => ['nullable', 'integer'],
+            'method'          => ['nullable', 'string'],
+            'stateData'       => ['nullable'],
+            'failureCode'     => ['nullable', 'string'],
+            'failureMessage'  => ['nullable', 'string'],
+        ]);
+
+        // `stateData` transporte notre payload injecté au checkout (chaîne JSON ou tableau).
+        $state = $data['stateData'] ?? null;
+        if (is_string($state)) {
+            $decoded = json_decode($state, true);
+            $state   = is_array($decoded) ? $decoded : [];
+        }
+        $state = is_array($state) ? $state : [];
+
+        return new PspWebhookEvent(
+            transactionId:  $data['transactionId'],
+            claimedSuccess: (bool) $data['isPaymentSucces'],
+            paymentId:      $state['payment_id'] ?? null,
+            idempotencyKey: $state['idempotency_key'] ?? null,
+            method:         $data['method'] ?? null,
+            failureCode:    $data['failureCode'] ?? null,
+            failureMessage: $data['failureMessage'] ?? null,
+        );
+    }
 
     public function prepareCheckout(Payment $payment): CheckoutContext
     {
@@ -52,6 +128,7 @@ class KkiapayDriver implements PspDriver
             fullName: $user?->full_name,
             reason:   "Cotisation Kafo — {$payment->reference}",
             restrictPaymentMethods: ['momo'],
+            mode: 'widget',
         );
     }
 

@@ -12,6 +12,7 @@ use App\Modules\Lending\Infrastructure\Models\Loan;
 use App\Modules\Lending\Infrastructure\Models\LoanRequest;
 use App\Modules\Lending\Jobs\MarkLateLoanRepaymentsJob;
 use App\Modules\Payments\Application\PaymentService;
+use App\Modules\Payments\Domain\Enums\MobileNetwork;
 use App\Modules\Payments\Domain\Enums\PaymentChannel;
 use App\Modules\Tontine\Application\CampaignClosureService;
 use App\Modules\Tontine\Application\CampaignPayoutService;
@@ -270,11 +271,13 @@ class SeedDemoData extends Command
         app(PaymentService::class)->recordCash($m->fresh(), $amount, $this->treasurer->id, $note, force: true, confirmAtypical: true);
     }
 
-    private function payMomo(Membership $m, int $amount, PaymentChannel $channel): void
+    /** Cotisation Mobile Money via KKiaPay (DA-20) ; le réseau est noté pour information. */
+    private function payMomo(Membership $m, int $amount, MobileNetwork $network): void
     {
         $user = $m->user;
-        $payment = app(PaymentService::class)->initiateMomo($m->fresh(), $amount, $channel, $user->phone, $user->id);
-        app(PaymentService::class)->confirmFromWebhook($payment->idempotency_key, 'KKP' . strtoupper(Str::random(10)), $channel->value);
+        $payment = app(PaymentService::class)->initiateMomo($m->fresh(), $amount, PaymentChannel::Kkiapay, $user->phone, $user->id);
+        app(PaymentService::class)->confirmFromWebhook($payment->idempotency_key, 'KKP' . strtoupper(Str::random(10)), PaymentChannel::Kkiapay->value,
+            ['psp' => 'kkiapay', 'psp_method' => strtoupper($network->value)], $network->value);
     }
 
     /**
@@ -289,7 +292,7 @@ class SeedDemoData extends Command
         $backlog = 0;
         foreach ($due->values() as $k => $inst) {
             $offset = $this->offsetOf($inst->due_date);
-            $channel = (crc32($m->id . $k) % 10) < 6 ? null : ((crc32($m->id . $k) % 2) ? PaymentChannel::Mtn : PaymentChannel::Moov);
+            $channel = (crc32($m->id . $k) % 10) < 6 ? null : ((crc32($m->id . $k) % 2) ? MobileNetwork::Mtn : MobileNetwork::Moov);
             if ($profile === 'stopped' && $k >= $stopAfter) {
                 return;
             }
@@ -393,9 +396,9 @@ class SeedDemoData extends Command
         app(CampaignClosureService::class)->close($c->fresh(), $this->super, 'Fin du cycle : rentrée scolaire.');
         foreach (CampaignPayout::where('campaign_id', $c->id)->get() as $k => $payout) {
             $this->at(-54 + intdiv($k, 5), 10 + $k % 6);
-            $channel = $k % 3 === 0 ? 'mtn' : 'cash';
+            $channel = $k % 3 === 0 ? 'kkiapay' : 'cash';
             app(CampaignPayoutService::class)->settle($payout->fresh(), $channel, $channel === 'cash' ? null : $payout->membership->user->phone,
-                $this->manager, (string) Str::uuid());
+                $this->manager, (string) Str::uuid(), network: $channel === 'cash' ? null : 'mtn');
         }
 
         // Reconduction : un débiteur retiré, deux nouveaux membres.
@@ -436,7 +439,7 @@ class SeedDemoData extends Command
         $amount = (int) $m->committed_amount_minor;
         foreach (Installment::where('membership_id', $m->id)->orderBy('sequence_number')->take($count)->get() as $k => $inst) {
             $this->at(min($untilOffset, $this->offsetOf($inst->due_date)), 9 + $k % 8, $k * 5);
-            $k % 3 === 2 ? $this->payMomo($m, $amount, PaymentChannel::Mtn) : $this->payCash($m, $amount);
+            $k % 3 === 2 ? $this->payMomo($m, $amount, MobileNetwork::Mtn) : $this->payCash($m, $amount);
         }
     }
 
@@ -478,7 +481,7 @@ class SeedDemoData extends Command
                 }
                 $payOffset = $m->id === $late && $offset === -14 ? -11 : $offset;
                 $this->at($payOffset, 7 + $k % 5, ($k * 11) % 60);
-                $k % 2 ? $this->payMomo($m, 10000, PaymentChannel::Moov) : $this->payCash($m, 10000, 'Cotisation tontine');
+                $k % 2 ? $this->payMomo($m, 10000, MobileNetwork::Moov) : $this->payCash($m, 10000, 'Cotisation tontine');
             }
         }
         $lateInst = Installment::where('membership_id', $late)->where('due_date', $this->day(-7))->first();
@@ -499,8 +502,8 @@ class SeedDemoData extends Command
             $round = $payouts->approve($round->fresh(), $this->manager, null, null);
             $this->at($approveAt + 1, 10);
             $momo = $offset % 14 === 0;
-            $payouts->initiate($round->fresh(), $momo ? 'mtn' : 'cash',
-                $momo ? Membership::find($round->beneficiary_membership_id)->user->phone : null, (string) Str::uuid(), $this->admin);
+            $payouts->initiate($round->fresh(), $momo ? 'kkiapay' : 'cash',
+                $momo ? Membership::find($round->beneficiary_membership_id)->user->phone : null, (string) Str::uuid(), $this->admin, $momo ? 'mtn' : null);
             if ($offset !== -14) {
                 $payouts->confirm($round->fresh(), 'REMISE-' . abs($offset), $this->admin);
             }
@@ -549,7 +552,7 @@ class SeedDemoData extends Command
                 }
                 $extra = $i === 4 && $k === 5 ? 3000 : 0;
                 $this->at($offset, 8 + $k % 6, ($i * 9) % 60);
-                $k % 2 ? $this->payMomo($m, $amount + $extra, PaymentChannel::Mtn) : $this->payCash($m, $amount + $extra, 'Cotisation tontine');
+                $k % 2 ? $this->payMomo($m, $amount + $extra, MobileNetwork::Mtn) : $this->payCash($m, $amount + $extra, 'Cotisation tontine');
             }
         }
 
@@ -602,7 +605,7 @@ class SeedDemoData extends Command
                     continue;
                 }
                 $this->at($offset, 9 + $k % 5);
-                $k % 2 ? $this->payMomo($m, (int) $inst->amount_minor, PaymentChannel::Moov) : $this->payCash($m, (int) $inst->amount_minor, 'Cotisation tontine');
+                $k % 2 ? $this->payMomo($m, (int) $inst->amount_minor, MobileNetwork::Moov) : $this->payCash($m, (int) $inst->amount_minor, 'Cotisation tontine');
             }
         }
         foreach (RotationRound::where('campaign_id', $cycle2->id)->orderBy('round_number')->get() as $round) {
@@ -679,8 +682,8 @@ class SeedDemoData extends Command
         foreach (CampaignPayout::where('campaign_id', $campaign->id)->get() as $k => $payout) {
             $this->at($offset + 1 + intdiv($k, 4), 10 + $k % 6);
             $momo = $k % 3 === 1;
-            app(CampaignPayoutService::class)->settle($payout->fresh(), $momo ? 'mtn' : 'cash',
-                $momo ? $payout->membership->user->phone : null, $this->manager, (string) Str::uuid());
+            app(CampaignPayoutService::class)->settle($payout->fresh(), $momo ? 'kkiapay' : 'cash',
+                $momo ? $payout->membership->user->phone : null, $this->manager, (string) Str::uuid(), network: $momo ? 'moov' : null);
         }
     }
 
@@ -732,9 +735,10 @@ class SeedDemoData extends Command
             }
             $offset = $stage === 'disbursed' ? -20 + $k * 3 : -6 + $k % 5;
             $this->at($offset, 9 + $k);
-            $channel = $k % 2 ? 'cash' : 'mtn';
+            $channel = $k % 2 ? 'cash' : 'kkiapay';
             $w = $svc->request($m, $amount, 'Besoin pour ' . ['un stock de marchandises', 'des frais de santé', 'la scolarité', 'une réparation', 'une cérémonie'][$k % 5],
-                $channel, $channel === 'cash' ? null : $m->user->phone, $m->user, 'member', (string) Str::uuid());
+                $channel === 'cash' ? 'cash' : 'mobile_money', $channel === 'cash' ? null : $m->user->phone, $m->user, 'member', (string) Str::uuid(),
+                $channel === 'cash' ? null : 'mtn');
             if ($stage === 'pending') {
                 continue;
             }
@@ -760,7 +764,7 @@ class SeedDemoData extends Command
                 continue;
             }
             $this->at($offset + 1, 10);
-            $svc->initiatePayout($w->fresh(), $channel, $channel === 'cash' ? null : $m->user->phone, (string) Str::uuid(), $this->admin);
+            $svc->initiatePayout($w->fresh(), $channel, $channel === 'cash' ? null : $m->user->phone, (string) Str::uuid(), $this->admin, $channel === 'cash' ? null : 'mtn');
             if ($stage === 'disbursed') {
                 $svc->confirmPayout($w->fresh(), 'VERS-' . strtoupper(Str::random(6)), $this->admin);
             }
@@ -793,7 +797,7 @@ class SeedDemoData extends Command
             $req = $lending->approve($req->fresh(), $this->manager->id);
             if ($stage === 'disbursed') {
                 $this->at($offset + 1, 10);
-                $lending->disburse($req->fresh(), $this->admin->id, 'mtn', $m->user->phone);
+                $lending->disburse($req->fresh(), $this->admin->id, 'kkiapay', $m->user->phone, 'mtn');
             }
         }
     }
@@ -836,7 +840,7 @@ class SeedDemoData extends Command
                 continue;
             }
             $this->at($offset + 2, 10);
-            $loan = $lending->disburse($req->fresh(), $this->admin->id, $p % 2 ? 'cash' : 'mtn', $user->phone);
+            $loan = $lending->disburse($req->fresh(), $this->admin->id, $p % 2 ? 'cash' : 'kkiapay', $user->phone, $p % 2 ? null : 'moov');
             $this->repayLoan($loan, $outcome);
             if ($outcome === 'written_off') {
                 $this->at(-3, 16);
@@ -860,7 +864,7 @@ class SeedDemoData extends Command
             }
             $amount = (int) $item->amount_minor;
             $this->at(min(0, $offset - ($k % 3)), 12);
-            $lending->recordRepayment($loan->fresh(), $amount, $k % 2 ? 'cash' : 'mtn', 'Échéance ' . ($k + 1), $this->treasurer->id);
+            $lending->recordRepayment($loan->fresh(), $amount, $k % 2 ? 'cash' : 'kkiapay', 'Échéance ' . ($k + 1), $this->treasurer->id);
         }
     }
 
@@ -874,7 +878,7 @@ class SeedDemoData extends Command
             [-65, 'out', 25000, 'cash', ManualEntryCategory::Rent, 'Loyer du local — septembre'],
             [-35, 'out', 25000, 'cash', ManualEntryCategory::Rent, 'Loyer du local — octobre'],
             [-60, 'out', 7500, 'cash', ManualEntryCategory::Supplies, 'Carnets et reçus'],
-            [-40, 'out', 6000, 'mtn', ManualEntryCategory::Communications, 'Forfaits téléphoniques des collecteurs'],
+            [-40, 'out', 6000, 'kkiapay', ManualEntryCategory::Communications, 'Forfaits téléphoniques des collecteurs'],
             [-22, 'out', 4500, 'cash', ManualEntryCategory::Transport, 'Déplacements au marché'],
             [-50, 'in', 50000, 'cash', ManualEntryCategory::DonationReceived, 'Don de l\'association des commerçants'],
         ];

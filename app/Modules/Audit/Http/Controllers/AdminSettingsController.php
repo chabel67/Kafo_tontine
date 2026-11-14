@@ -29,8 +29,8 @@ class AdminSettingsController extends Controller
      * suffit (EF-ADMIN-02) : seules les clés transmises sont écrites et auditées ; le
      * payload complet reste accepté.
      *
-     * DA-13 : un canal non routé par KKiaPay (Orange, Wave) ne peut pas être activé
-     * (422 `channel_not_supported`). Le désactiver reste possible ; renvoyer la valeur
+     * DA-20 : un agrégateur dont les clés ne sont pas configurées ne peut pas être activé
+     * (422 `psp_not_configured`). Le désactiver reste possible ; renvoyer la valeur
      * déjà stockée (payload complet) n'est pas une activation et passe.
      */
     public function update(Request $request): JsonResponse
@@ -46,13 +46,15 @@ class AdminSettingsController extends Controller
             ->pluck('value', 'key');
 
         // Contrôle avant toute écriture : la requête est acceptée ou refusée en bloc.
+        // DA-20 : un agrégateur sans clés configurées ne peut pas être activé.
+        $psps = app(\App\Modules\Payments\Infrastructure\Psp\PspRegistry::class);
         foreach ($data['settings'] as $item) {
             $channel = PaymentChannel::fromSettingKey($item['key']);
-            if ($channel && ! $channel->isSupported()
+            if ($channel && $channel->isPsp() && ! ($psps->has($channel) && $psps->driver($channel)->isConfigured())
                 && self::truthy($item['value']) && ! self::truthy($current[$item['key']] ?? null)) {
                 return ApiResponse::error(
-                    'channel_not_supported',
-                    "Le canal {$channel->label()} n'est pas pris en charge par l'agrégateur de paiement (KKiaPay) : il ne peut pas être activé.",
+                    'psp_not_configured',
+                    "{$channel->label()} n'est pas configuré (clés API manquantes) : il ne peut pas être activé.",
                     422,
                     ['details' => ['key' => $item['key'], 'channel' => $channel->value]],
                 );
@@ -79,18 +81,27 @@ class AdminSettingsController extends Controller
     }
 
     /**
-     * Paramètres groupés. Additif (lot A-bis) : chaque ligne du groupe `psp` porte
-     * `supported` (canal routé par le PSP, DA-13) et `effective_enabled`
-     * (valeur stockée ET canal supporté). La valeur stockée n'est jamais modifiée.
+     * Paramètres groupés. Chaque ligne du groupe `psp` porte `channel`, `configured`
+     * (clés de l'agrégateur présentes, DA-20 ; `supported` = alias historique),
+     * `effective_enabled` (valeur stockée ET configuré), et pour un agrégateur
+     * `networks` et `sandbox`. La valeur stockée n'est jamais modifiée.
      */
     private function groupedSettings(): array
     {
+        $psps = app(\App\Modules\Payments\Infrastructure\Psp\PspRegistry::class);
         $rows = DB::table('system_settings')->orderBy('group')->orderBy('key')->get()
-            ->map(function ($row) {
+            ->map(function ($row) use ($psps) {
                 $channel = PaymentChannel::fromSettingKey($row->key);
                 if ($channel) {
-                    $row->supported         = $channel->isSupported();
-                    $row->effective_enabled = $channel->isSupported() && self::truthy($row->value);
+                    $configured = ! $channel->isPsp() || ($psps->has($channel) && $psps->driver($channel)->isConfigured());
+                    $row->channel           = $channel->value;
+                    $row->supported         = $configured;
+                    $row->configured        = $configured;
+                    $row->effective_enabled = $configured && self::truthy($row->value);
+                    if ($channel->isPsp() && $psps->has($channel)) {
+                        $row->networks = $psps->driver($channel)->networks();
+                        $row->sandbox  = $psps->driver($channel)->isSandbox();
+                    }
                 }
                 return $row;
             });

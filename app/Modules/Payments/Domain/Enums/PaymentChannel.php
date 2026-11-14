@@ -2,38 +2,45 @@
 
 namespace App\Modules\Payments\Domain\Enums;
 
+/**
+ * Moyen d'encaissement ou de versement (DA-20, 2026-11-14).
+ *
+ * Un moyen de paiement est un AGRÉGATEUR (KKiaPay, FedaPay) ou les espèces — jamais un
+ * réseau. Le réseau (MTN, Moov, Celtiis…) est choisi dans le widget de l'agrégateur et
+ * noté pour information (`MobileNetwork`). Le solde réel est chez l'agrégateur :
+ * compte de trésorerie `PSP_FLOAT:{AGRÉGATEUR}`.
+ *
+ * Les anciennes valeurs (mtn, moov, orange, wave) restent dans l'historique des
+ * versements ; elles ne sont plus acceptées en entrée (`legacyLabel()` pour l'affichage).
+ */
 enum PaymentChannel: string
 {
-    case Cash   = 'cash';
-    case Mtn    = 'mtn';
-    case Orange = 'orange';
-    case Moov   = 'moov';
-    case Wave   = 'wave';
+    case Cash    = 'cash';
+    case Kkiapay = 'kkiapay';
+    case Fedapay = 'fedapay';
+
+    /** Anciennes valeurs « réseau » (avant DA-20), affichées dans l'historique. */
+    public const LEGACY_NETWORK_VALUES = ['mtn', 'moov', 'orange', 'wave'];
 
     public function label(): string
     {
-        return match($this) {
-            self::Cash   => 'Espèces',
-            self::Mtn    => 'MTN MoMo',
-            self::Orange => 'Orange Money',
-            self::Moov   => 'Moov Money',
-            self::Wave   => 'Wave',
+        return match ($this) {
+            self::Cash    => 'Espèces',
+            self::Kkiapay => 'KKiaPay',
+            self::Fedapay => 'FedaPay',
         };
     }
 
-    public function isMomo(): bool
+    /** Agrégateur de paiement (tout sauf les espèces). */
+    public function isPsp(): bool
     {
         return $this !== self::Cash;
     }
 
-    /**
-     * DA-13 : canal Mobile Money réellement routé par l'agrégateur KKiaPay (MTN, Moov).
-     * Orange et Wave restent dans l'enum (historique, données existantes) mais ne peuvent
-     * ni être activés ni être initiés par un membre.
-     */
-    public function isRoutedByPsp(): bool
+    /** Alias historique : un agrégateur encaisse du Mobile Money. */
+    public function isMomo(): bool
     {
-        return in_array($this, [self::Mtn, self::Moov], true);
+        return $this->isPsp();
     }
 
     /** Clé du paramètre système d'activation (`system_settings`, groupe psp). */
@@ -42,10 +49,16 @@ enum PaymentChannel: string
         return "psp_{$this->value}_enabled";
     }
 
-    /** Canal disponible sur la plateforme : espèces (trésorier) ou MoMo routé par le PSP. */
-    public function isSupported(): bool
+    /** @return list<self> */
+    public static function psps(): array
     {
-        return $this === self::Cash || $this->isRoutedByPsp();
+        return [self::Kkiapay, self::Fedapay];
+    }
+
+    /** @return list<string> */
+    public static function values(): array
+    {
+        return array_map(fn (self $c) => $c->value, self::cases());
     }
 
     public static function fromSettingKey(string $key): ?self
@@ -57,5 +70,19 @@ enum PaymentChannel: string
         }
 
         return null;
+    }
+
+    /** Libellé d'une valeur stockée, y compris les anciennes valeurs réseau. */
+    public static function labelFor(?string $value): string
+    {
+        if ($value === null || $value === '') {
+            return '—';
+        }
+        if ($case = self::tryFrom($value)) {
+            return $case->label();
+        }
+        $network = MobileNetwork::tryFrom($value);
+
+        return ($network?->label() ?? strtoupper($value)) . ' (ancien)';
     }
 }

@@ -36,6 +36,7 @@ class LoanResource extends JsonResource
             'status_label'         => $this->status?->label(),
             'disbursed_channel'    => $this->disbursed_channel,
             'disbursed_phone'      => $this->disbursed_phone,
+            'disbursed_network'    => $this->disbursed_network,
             'disbursed_at'         => $this->disbursed_at?->toIso8601String(),
             'written_off_at'       => $this->written_off_at?->toIso8601String(),
             'written_off_reason'   => $this->written_off_reason,

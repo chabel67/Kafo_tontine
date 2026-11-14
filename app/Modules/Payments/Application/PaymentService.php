@@ -261,8 +261,9 @@ class PaymentService
         string $pspReference,
         string $channel,
         ?array $metadata = null,
+        ?string $network = null,
     ): Payment {
-        return DB::transaction(function () use ($idempotencyKey, $pspReference, $channel, $metadata) {
+        return DB::transaction(function () use ($idempotencyKey, $pspReference, $channel, $metadata, $network) {
             // Relecture sous verrou : deux webhooks simultanés ne confirment (et n'écrivent) qu'une fois.
             $payment = Payment::where('idempotency_key', $idempotencyKey)->lockForUpdate()->firstOrFail();
 
@@ -274,6 +275,7 @@ class PaymentService
                 'status'        => PaymentStatus::Confirmed->value,
                 'psp_reference' => $pspReference,
                 'confirmed_at'  => now(),
+                'network'       => $network ?? $payment->network,
                 'metadata'      => array_merge((array) $payment->metadata, $metadata ?? []),
             ]);
 
@@ -393,7 +395,7 @@ class PaymentService
         $floatKey   = \App\Modules\Ledger\Domain\ValueObjects\TreasuryAccount::key($channel);
         $savingsKey = "MEMBER_SAVINGS:{$membership->id}";
 
-        $this->ledger->openAccount($floatKey, AccountType::MomoFloat, null, "Float {$channel}");
+        $this->ledger->openAccount($floatKey, \App\Modules\Ledger\Domain\ValueObjects\TreasuryAccount::type($channel), null, "Solde " . \App\Modules\Payments\Domain\Enums\PaymentChannel::labelFor($channel));
 
         if (!\App\Modules\Ledger\Infrastructure\Models\LedgerAccount::where('key', $savingsKey)->exists()) {
             $this->ledger->openAccount($savingsKey, AccountType::MemberSavings, $membership->user_id);
@@ -405,7 +407,7 @@ class PaymentService
                 ['account' => $savingsKey, 'type' => 'credit', 'amount' => $payment->amount_minor],
             ],
             reference:   $this->ledger->nextReference(),
-            description: "Paiement MoMo {$channel} — {$payment->reference}",
+            description: "Paiement MoMo via " . \App\Modules\Payments\Domain\Enums\PaymentChannel::labelFor($channel) . " — {$payment->reference}",
             createdById: $payment->created_by,
             metadata:    ['payment_id' => $payment->id, 'channel' => $channel],
         );

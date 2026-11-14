@@ -19,7 +19,7 @@ class Payment extends Model
     protected $fillable = [
         'reference', 'idempotency_key', 'membership_id',
         'channel', 'purpose', 'psp_reference', 'status',
-        'amount_minor', 'phone', 'notes',
+        'amount_minor', 'phone', 'network', 'notes',
         'confirmed_at', 'failed_at', 'created_by', 'metadata',
     ];
 

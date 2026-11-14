@@ -9,8 +9,8 @@ use Tests\Support\BuildsKafoFixtures;
 use Tests\TestCase;
 
 /**
- * Lot A-bis — point 6 (Orange et Wave non routés par KKiaPay, DA-13) et point 12
- * (PATCH /admin/settings partiel, step-up maintenu).
+ * DA-20 — les moyens de paiement sont des agrégateurs (KKiaPay, FedaPay), activables
+ * seulement s'ils sont configurés ; PATCH /admin/settings partiel, step-up maintenu.
  */
 class PspChannelsAndSettingsTest extends TestCase
 {
@@ -22,9 +22,11 @@ class PspChannelsAndSettingsTest extends TestCase
         $this->seedRoles();
     }
 
-    private function setting(string $key): string
+    private function setting(string $key): ?string
     {
-        return (string) DB::table('system_settings')->where('key', $key)->value('value');
+        $v = DB::table('system_settings')->where('key', $key)->value('value');
+
+        return $v === null ? null : (string) $v;
     }
 
     private function patchSettings(\App\Modules\Identity\Infrastructure\Models\User $admin, array $settings)
@@ -32,58 +34,56 @@ class PspChannelsAndSettingsTest extends TestCase
         return $this->patchJson('/api/admin/settings', ['settings' => $settings], $this->stepUpHeader($admin));
     }
 
-    public function test_unsupported_channels_cannot_be_enabled(): void
+    public function test_settings_are_per_aggregator_not_per_network(): void
     {
-        $admin = $this->actingAsStaff('admin');
-        $this->assertSame('false', $this->setting('psp_wave_enabled'));
+        foreach (['mtn', 'moov', 'orange', 'wave'] as $network) {
+            $this->assertNull($this->setting("psp_{$network}_enabled"));
+        }
+        $this->assertNotNull($this->setting('psp_kkiapay_enabled'));
+        $this->assertSame('false', $this->setting('psp_fedapay_enabled'));
+    }
 
-        $this->patchSettings($admin, [['key' => 'psp_wave_enabled', 'value' => 'true']])
+    public function test_unconfigured_aggregator_cannot_be_enabled(): void
+    {
+        config()->set('services.fedapay', []);
+        app()->forgetInstance(\App\Modules\Payments\Infrastructure\Psp\PspRegistry::class);
+        $admin = $this->actingAsStaff('admin');
+
+        $this->patchSettings($admin, [['key' => 'psp_fedapay_enabled', 'value' => 'true']])
             ->assertStatus(422)
-            ->assertJsonPath('error.code', 'channel_not_supported')
-            ->assertJsonPath('error.details.channel', 'wave');
-        $this->assertSame('false', $this->setting('psp_wave_enabled'));
+            ->assertJsonPath('error.code', 'psp_not_configured')
+            ->assertJsonPath('error.details.channel', 'fedapay');
+        $this->assertSame('false', $this->setting('psp_fedapay_enabled'));
 
         // Requête refusée en bloc : la clé valide qui l'accompagne n'est pas écrite.
         $this->patchSettings($admin, [
             ['key' => 'min_trust_score', 'value' => '65'],
-            ['key' => 'psp_wave_enabled', 'value' => 'true'],
+            ['key' => 'psp_fedapay_enabled', 'value' => 'true'],
         ])->assertStatus(422);
         $this->assertSame('60', $this->setting('min_trust_score'));
 
-        // Désactiver un canal non supporté reste possible ; le réactiver, non.
-        $this->assertSame('true', $this->setting('psp_orange_enabled'));
-        $this->patchSettings($admin, [['key' => 'psp_orange_enabled', 'value' => 'false']])->assertOk();
-        $this->patchSettings($admin, [['key' => 'psp_orange_enabled', 'value' => 'true']])
-            ->assertStatus(422)->assertJsonPath('error.code', 'channel_not_supported');
-
-        // Canaux routés : activation libre.
-        $this->patchSettings($admin, [['key' => 'psp_moov_enabled', 'value' => 'true']])->assertOk();
-        $this->assertSame('true', $this->setting('psp_moov_enabled'));
+        // Une fois configuré : activation libre.
+        $this->configurePsps(fedapayEnabled: false);
+        $this->patchSettings($admin, [['key' => 'psp_fedapay_enabled', 'value' => 'true']])->assertOk();
+        $this->assertSame('true', $this->setting('psp_fedapay_enabled'));
     }
 
-    public function test_full_payload_with_already_enabled_orange_still_saves(): void
+    public function test_settings_exposure_flags_configured_aggregators(): void
     {
-        $admin = $this->actingAsStaff('admin');
-        $full  = DB::table('system_settings')->get(['key', 'value'])
-            ->map(fn ($r) => ['key' => $r->key, 'value' => $r->key === 'min_trust_score' ? '70' : $r->value])->all();
+        $this->configurePsps();
+        config()->set('services.fedapay.secret_key', null);
+        app()->forgetInstance(\App\Modules\Payments\Infrastructure\Psp\PspRegistry::class);
 
-        $this->patchSettings($admin, $full)->assertOk();
-        $this->assertSame('70', $this->setting('min_trust_score'));
-        $this->assertSame('true', $this->setting('psp_orange_enabled'), 'valeur stockée inchangée');
-    }
-
-    public function test_settings_exposure_flags_supported_channels(): void
-    {
         $this->actingAsStaff('admin');
         $psp = collect($this->getJson('/api/admin/settings')->assertOk()->json('data.psp'))->keyBy('key');
 
-        $this->assertFalse($psp['psp_orange_enabled']['supported']);
-        $this->assertSame('true', $psp['psp_orange_enabled']['value'], 'la donnée stockée est exposée telle quelle');
-        $this->assertFalse($psp['psp_orange_enabled']['effective_enabled']);
-        $this->assertFalse($psp['psp_wave_enabled']['supported']);
-        $this->assertTrue($psp['psp_mtn_enabled']['supported']);
-        $this->assertTrue($psp['psp_mtn_enabled']['effective_enabled']);
-        $this->assertTrue($psp['psp_cash_enabled']['supported']);
+        $this->assertTrue($psp['psp_kkiapay_enabled']['configured']);
+        $this->assertTrue($psp['psp_kkiapay_enabled']['effective_enabled']);
+        $this->assertSame(['mtn', 'moov'], $psp['psp_kkiapay_enabled']['networks']);
+        $this->assertFalse($psp['psp_fedapay_enabled']['configured']);
+        $this->assertSame('true', $psp['psp_fedapay_enabled']['value'], 'la donnée stockée est exposée telle quelle');
+        $this->assertFalse($psp['psp_fedapay_enabled']['effective_enabled']);
+        $this->assertTrue($psp['psp_cash_enabled']['configured']);
 
         $lending = collect($this->getJson('/api/admin/settings')->json('data.lending'))->first();
         $this->assertArrayNotHasKey('supported', $lending);
@@ -110,21 +110,43 @@ class PspChannelsAndSettingsTest extends TestCase
         $this->patchSettings($admin, [])->assertStatus(422);
     }
 
-    public function test_member_initiation_refuses_orange_wave_and_cash(): void
+    public function test_member_sees_only_available_aggregators(): void
     {
+        $this->configurePsps(fedapayEnabled: false);
+        Sanctum::actingAs($this->member());
+
+        $this->getJson('/api/member/payment-methods')->assertOk()
+            ->assertJsonCount(1, 'data')
+            ->assertJsonPath('data.0.channel', 'kkiapay')
+            ->assertJsonPath('data.0.networks', ['mtn', 'moov'])
+            ->assertJsonPath('data.0.mode', 'widget');
+    }
+
+    public function test_member_initiation_refuses_networks_cash_and_disabled_aggregator(): void
+    {
+        $this->configurePsps(fedapayEnabled: false);
         $member     = $this->member();
         $membership = $this->membership($member);
         Sanctum::actingAs($member);
 
-        foreach (['orange', 'wave', 'cash'] as $channel) {
+        // Un réseau n'est plus un moyen de paiement.
+        $this->postJson('/api/member/payments/initiate', [
+            'membership_id' => $membership->id, 'channel' => 'mtn', 'amount_minor' => 5000,
+        ])->assertStatus(422);
+
+        foreach (['cash', 'fedapay'] as $channel) {
             $this->postJson('/api/member/payments/initiate', [
                 'membership_id' => $membership->id, 'channel' => $channel, 'amount_minor' => 5000,
-            ])->assertStatus(422)->assertJsonPath('error.code', 'channel_not_supported')->assertJsonPath('error.details.channel', $channel);
+            ])->assertStatus(422)->assertJsonPath('error.code', 'channel_not_supported')
+                ->assertJsonPath('error.details.supported_channels', ['kkiapay']);
         }
         $this->assertDatabaseCount('payments', 0);
 
         $this->postJson('/api/member/payments/initiate', [
-            'membership_id' => $membership->id, 'channel' => 'mtn', 'amount_minor' => 5000,
-        ])->assertCreated()->assertJsonPath('data.channel', 'mtn');
+            'membership_id' => $membership->id, 'channel' => 'kkiapay', 'amount_minor' => 5000,
+        ])->assertCreated()
+            ->assertJsonPath('data.channel', 'kkiapay')
+            ->assertJsonPath('data.checkout.provider', 'kkiapay')
+            ->assertJsonPath('data.checkout.mode', 'widget');
     }
 }

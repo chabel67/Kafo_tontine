@@ -110,7 +110,7 @@ class CashRegisterAndPaymentsTest extends TestCase
         $this->travelTo(Carbon::parse('2026-10-28 09:00:00', 'UTC'));
         Payment::create([
             'reference' => 'PAY-T-' . Str::random(6), 'idempotency_key' => (string) Str::uuid(),
-            'membership_id' => $this->membership->id, 'channel' => 'mtn', 'status' => 'pending',
+            'membership_id' => $this->membership->id, 'channel' => 'kkiapay', 'status' => 'pending',
             'amount_minor' => 5000,
         ]);
         $this->travelBack();

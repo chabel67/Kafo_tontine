@@ -13,15 +13,14 @@ use App\Modules\Ledger\Infrastructure\Models\LedgerTransaction;
  * en partie double stricte via LedgerService::post().
  *
  * Contreparties automatiques :
- *   - Sortie : DR OPERATIONAL_EXPENSE / CR CASH_BOX ou MOMO_FLOAT:{channel}
- *   - Entrée : DR CASH_BOX ou MOMO_FLOAT:{channel} / CR MISC_REVENUE
+ *   - Sortie : DR OPERATIONAL_EXPENSE / CR CASH_BOX ou PSP_FLOAT:{AGRÉGATEUR}
+ *   - Entrée : DR CASH_BOX ou PSP_FLOAT:{AGRÉGATEUR} / CR MISC_REVENUE
  */
 class LedgerManualEntryService
 {
     public const DIRECTION_IN  = 'in';
     public const DIRECTION_OUT = 'out';
 
-    private const CHANNELS = ['cash', 'mtn', 'orange', 'moov', 'wave'];
 
     public function __construct(private readonly LedgerService $ledger) {}
 
@@ -39,7 +38,7 @@ class LedgerManualEntryService
         if ($amountMinor < 1) {
             throw new \InvalidArgumentException("Amount must be positive.");
         }
-        if (! in_array($channel, self::CHANNELS, true)) {
+        if (\App\Modules\Payments\Domain\Enums\PaymentChannel::tryFrom($channel) === null) {
             throw new \InvalidArgumentException("Invalid channel: {$channel}");
         }
 
@@ -94,7 +93,7 @@ class LedgerManualEntryService
     {
         return $channel === 'cash'
             ? ['CASH_BOX', AccountType::CashBox]
-            : [\App\Modules\Ledger\Domain\ValueObjects\TreasuryAccount::key($channel), AccountType::MomoFloat];
+            : [\App\Modules\Ledger\Domain\ValueObjects\TreasuryAccount::key($channel), AccountType::PspFloat];
     }
 
     private function buildDescription(string $direction, ManualEntryCategory $category, ?string $notes): string

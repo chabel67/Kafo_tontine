@@ -22,7 +22,7 @@ class EarlyWithdrawalPayoutAttempt extends Model
     protected $table = 'early_withdrawal_payout_attempts';
 
     protected $fillable = [
-        'early_withdrawal_id', 'attempt_no', 'idempotency_key', 'channel', 'phone',
+        'early_withdrawal_id', 'attempt_no', 'idempotency_key', 'channel', 'phone', 'network',
         'status', 'external_reference', 'failure_reason',
         'initiated_by', 'initiated_at', 'completed_by', 'completed_at', 'ledger_transaction_id',
     ];

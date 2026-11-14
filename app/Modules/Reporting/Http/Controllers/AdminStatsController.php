@@ -33,14 +33,14 @@ class AdminStatsController extends Controller
             ->selectRaw('COUNT(*) as count, SUM(amount_minor) as total')
             ->first();
 
-        // Cash vs MoMo du jour
+        // Espèces vs agrégateurs (KKiaPay, FedaPay…) du jour — DA-20
         $todayCash = Payment::where('status', 'confirmed')
             ->where('channel', 'cash')
             ->where('confirmed_at', '>=', $today)
             ->sum('amount_minor');
 
         $todayMomo = Payment::where('status', 'confirmed')
-            ->whereIn('channel', ['mtn', 'orange', 'moov', 'wave'])
+            ->where('channel', '!=', 'cash')
             ->where('confirmed_at', '>=', $today)
             ->sum('amount_minor');
 
@@ -167,11 +167,12 @@ class AdminStatsController extends Controller
         $rows = DB::table('payments')
             ->selectRaw("{$localDate} as date,
                 channel,
+                network,
                 status,
                 COUNT(*) as count,
                 COALESCE(SUM(amount_minor), 0) as total_minor")
             ->whereBetween(DB::raw($localDate), [$from, $to])
-            ->groupByRaw("{$localDate}, channel, status")
+            ->groupByRaw("{$localDate}, channel, network, status")
             ->orderByDesc('date')
             ->orderBy('channel')
             ->get();
@@ -193,6 +194,11 @@ class AdminStatsController extends Controller
                     'confirmed_count' => (int) $ch->where('status', 'confirmed')->sum('count'),
                     'pending_count'   => (int) $ch->where('status', 'pending')->sum('count'),
                     'failed_count'    => (int) $ch->where('status', 'failed')->sum('count'),
+                ]),
+                // Réseau rapporté par l'agrégateur (information, DA-20).
+                'by_network'            => $confirmed->whereNotNull('network')->groupBy('network')->map(fn ($n) => [
+                    'confirmed_minor' => (int) $n->sum('total_minor'),
+                    'confirmed_count' => (int) $n->sum('count'),
                 ]),
             ];
         });
@@ -310,7 +316,8 @@ class AdminStatsController extends Controller
                 'reference'    => $p->reference,
                 'amount_minor' => $p->amount_minor,
                 'channel'      => $p->channel?->value,
-                'channel_label' => $p->channel_label,
+                'network'      => $p->network,
+                'channel_label' => $p->channel?->label(),
                 'member'       => $p->membership?->user?->full_name ?? '—',
                 'campaign'     => $p->membership?->campaign?->name ?? '—',
                 'confirmed_at' => $p->confirmed_at?->toIso8601String(),

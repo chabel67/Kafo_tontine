@@ -34,7 +34,7 @@ use Illuminate\Support\Facades\Log;
  *        DR MEMBER_SAVINGS (compensation + net)
  *        CR LOAN_RECEIVABLE:{avance}            compensation des avances
  *        CR REVENUE_INTEREST / LOAN_RECEIVABLE   remboursement volontaire (intérêts d'abord)
- *        CR CASH_BOX | MOMO_FLOAT:{CANAL}        montant versé au membre
+ *        CR CASH_BOX | PSP_FLOAT:{AGRÉGATEUR}        montant versé au membre
  *   6. reliquat d'avance non couvert → EXPENSE_LOSS (R-CAMP-09) ;
  *   7. avances → closed_by_campaign, adhésion → closed, payout → settled + instantané
  *      expliquant l'écart prévisionnel / réel.
@@ -59,6 +59,7 @@ class CampaignPayoutService
         User $actor,
         ?string $idempotencyKey = null,
         ?array $loanRepayment = null,
+        ?string $network = null,
     ): CampaignPayout {
         if ($idempotencyKey && ($existing = CampaignPayout::where('idempotency_key', $idempotencyKey)->first())) {
             if ($existing->id !== $payout->id) {
@@ -67,7 +68,7 @@ class CampaignPayoutService
             return $existing;
         }
 
-        return DB::transaction(function () use ($payout, $channel, $phone, $actor, $idempotencyKey, $loanRepayment) {
+        return DB::transaction(function () use ($payout, $channel, $phone, $actor, $idempotencyKey, $loanRepayment, $network) {
             $payout = CampaignPayout::whereKey($payout->id)->lockForUpdate()->firstOrFail();
             if ($payout->status !== CampaignPayoutStatus::Pending) {
                 throw new PayoutAlreadySettledException($payout->id);
@@ -198,6 +199,7 @@ class CampaignPayoutService
                 'status'                      => CampaignPayoutStatus::Settled->value,
                 'settled_channel'             => $channel,
                 'settled_phone'               => $channel === 'cash' ? null : $phone,
+                'settled_network'             => $channel === 'cash' ? null : $network,
                 'settled_by'                  => $actor->id,
                 'settled_at'                  => now(),
                 'savings_minor'               => $savingsMinor,

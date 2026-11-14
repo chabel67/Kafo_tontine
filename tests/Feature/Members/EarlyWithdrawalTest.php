@@ -61,7 +61,7 @@ class EarlyWithdrawalTest extends TestCase
     private function initiate(string $id, User $admin, ?string $key = null)
     {
         return $this->postJson("/api/admin/early-withdrawals/{$id}/payout/initiate", [
-            'channel' => 'mtn', 'phone' => '+2290197000099', 'idempotency_key' => $key ?? (string) Str::uuid(),
+            'channel' => 'kkiapay', 'network' => 'mtn', 'phone' => '+2290197000099', 'idempotency_key' => $key ?? (string) Str::uuid(),
         ], $this->stepUpHeader($admin));
     }
 
@@ -107,7 +107,9 @@ class EarlyWithdrawalTest extends TestCase
             'payout_phone' => '+2290197000077', 'idempotency_key' => (string) Str::uuid(),
         ])->assertCreated()
             ->assertJsonPath('data.status', 'pending')
-            ->assertJsonPath('data.payout_channel', 'mtn');
+            // DA-20 : une ancienne app qui envoie un réseau → Mobile Money + réseau.
+            ->assertJsonPath('data.payout_channel', 'mobile_money')
+            ->assertJsonPath('data.payout_network', 'mtn');
 
         $this->assertSame(0, $this->withdrawalEntries(), 'une demande ne décaisse jamais');
         $this->assertTrue(InAppNotification::where('user_id', $this->owner->id)->where('title', 'Demande de retrait reçue')->exists());
@@ -254,7 +256,7 @@ class EarlyWithdrawalTest extends TestCase
         $this->assertSame(8000, (int) $entries->where('entry_type', 'debit')->sum('amount_minor'));
         $this->assertSame(8000, (int) $entries->where('entry_type', 'credit')->sum('amount_minor'));
         $this->assertSame("MEMBER_SAVINGS:{$this->membership->id}", $entries->firstWhere('entry_type', 'debit')->account_key);
-        $this->assertSame('MOMO_FLOAT:MTN', $entries->firstWhere('entry_type', 'credit')->account_key);
+        $this->assertSame('PSP_FLOAT:KKIAPAY', $entries->firstWhere('entry_type', 'credit')->account_key);
         $this->assertSame(12000, app(LedgerService::class)->balance("MEMBER_SAVINGS:{$this->membership->id}"));
         $this->assertSame('active', $this->membership->fresh()->status->value, 'l\'adhésion continue');
         $this->assertTrue(InAppNotification::where('user_id', $this->owner->id)->where('title', 'Versement confirmé')->exists());

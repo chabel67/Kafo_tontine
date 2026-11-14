@@ -17,10 +17,10 @@ class EarlyWithdrawal extends Model
 
     protected $fillable = [
         'reference', 'idempotency_key', 'membership_id', 'user_id',
-        'amount_minor', 'reason', 'payout_channel', 'payout_phone', 'status', 'requested_via', 'requested_by',
+        'amount_minor', 'reason', 'payout_channel', 'payout_phone', 'payout_network', 'status', 'requested_via', 'requested_by',
         'assigned_to', 'reviewed_at', 'info_request_message', 'info_requested_at', 'member_response', 'responded_at',
         'decided_by', 'decided_at', 'rejected_reason',
-        'disbursed_by', 'disbursed_at', 'disbursed_channel', 'disbursed_phone',
+        'disbursed_by', 'disbursed_at', 'disbursed_channel', 'disbursed_phone', 'disbursed_network',
         'ledger_transaction_id', 'cancelled_at',
     ];
 

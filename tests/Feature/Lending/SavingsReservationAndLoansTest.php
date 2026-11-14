@@ -219,16 +219,16 @@ class SavingsReservationAndLoansTest extends TestCase
     {
         $payment = Payment::create([
             'reference' => 'PAY-WH-1', 'idempotency_key' => (string) Str::uuid(), 'membership_id' => $this->membership->id,
-            'channel' => 'mtn', 'status' => 'pending', 'amount_minor' => 5000,
+            'channel' => 'kkiapay', 'status' => 'pending', 'amount_minor' => 5000,
         ]);
         $service = app(PaymentService::class);
         $before  = LedgerTransaction::count();
 
-        $service->confirmFromWebhook($payment->idempotency_key, 'PSP-1', 'mtn');
-        $service->confirmFromWebhook($payment->idempotency_key, 'PSP-1', 'mtn');
+        $service->confirmFromWebhook($payment->idempotency_key, 'PSP-1', 'kkiapay');
+        $service->confirmFromWebhook($payment->idempotency_key, 'PSP-1', 'kkiapay');
 
         $this->assertSame($before + 1, LedgerTransaction::count());
         $this->assertSame(105000, $this->savingsBalance($this->membership));
-        $this->assertSame(5000, app(LedgerService::class)->balance('MOMO_FLOAT:MTN'));
+        $this->assertSame(5000, app(LedgerService::class)->balance('PSP_FLOAT:KKIAPAY'));
     }
 }

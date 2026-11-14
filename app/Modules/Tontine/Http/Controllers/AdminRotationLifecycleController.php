@@ -83,7 +83,7 @@ class AdminRotationLifecycleController extends Controller
     public function initiateRefund(Request $request, RotationDeparture $departure): JsonResponse
     {
         $data = $this->payoutPayload($request);
-        $a    = $this->cashOut->initiateDepartureRefund($departure, $data['channel'], $data['phone'] ?? null, $data['idempotency_key'], $request->user());
+        $a    = $this->cashOut->initiateDepartureRefund($departure, $data['channel'], $data['phone'] ?? null, $data['idempotency_key'], $request->user(), $data['network'] ?? null);
         $this->audit->logFromRequest($request, 'rotation.cash_out.initiate', 'rotation_payout_attempt', $a->id, [], $this->attempt($a));
 
         return ApiResponse::success($this->attempt($a));
@@ -98,7 +98,7 @@ class AdminRotationLifecycleController extends Controller
             'reason'        => ['required', 'string', 'min:10', 'max:500'],
         ]);
         $a = $this->cashOut->initiateSurplus($campaign, Membership::findOrFail($data['membership_id']), (int) $data['amount_minor'],
-            $data['reason'], $data['channel'], $data['phone'] ?? null, $data['idempotency_key'], $request->user());
+            $data['reason'], $data['channel'], $data['phone'] ?? null, $data['idempotency_key'], $request->user(), $data['network'] ?? null);
         $this->audit->logFromRequest($request, 'rotation.cash_out.initiate', 'rotation_payout_attempt', $a->id, [], $this->attempt($a));
 
         return ApiResponse::success($this->attempt($a));
@@ -158,7 +158,8 @@ class AdminRotationLifecycleController extends Controller
     private function payoutPayload(Request $request, array $extra = []): array
     {
         return $request->validate([
-            'channel'         => ['required', 'in:cash,mtn,moov,orange,wave'],
+            'channel'         => ['required', \Illuminate\Validation\Rule::in(\App\Modules\Payments\Domain\Enums\PaymentChannel::values())],
+            'network'         => ['required_unless:channel,cash', 'nullable', \Illuminate\Validation\Rule::in(\App\Modules\Payments\Domain\Enums\MobileNetwork::values())],
             'phone'           => ['required_unless:channel,cash', 'nullable', 'string', 'regex:/^\+\d{7,15}$/'],
             'idempotency_key' => ['required', 'string', 'min:8', 'max:100'],
             ...$extra,
@@ -170,7 +171,7 @@ class AdminRotationLifecycleController extends Controller
         return [
             'id' => $a->id, 'kind' => $a->kind, 'membership_id' => $a->membership_id, 'attempt_no' => $a->attempt_no,
             'amount_minor' => $a->amount_minor, 'reason' => $a->reason, 'reference' => $a->reference,
-            'channel' => $a->channel, 'status' => $a->status, 'failure_reason' => $a->failure_reason,
+            'channel' => $a->channel, 'network' => $a->network, 'status' => $a->status, 'failure_reason' => $a->failure_reason,
             'initiated_at' => $a->initiated_at?->toIso8601String(), 'completed_at' => $a->completed_at?->toIso8601String(),
         ];
     }

@@ -13,7 +13,7 @@ use Illuminate\Support\Facades\DB;
  * Journal des opérations — vue chronologique cross-compte du ledger.
  *
  * Une ligne = une transaction ledger. Colonnes Entrée/Sortie exprimées du
- * point de vue trésorerie (Δ signé sur `CASH_BOX` ∪ `MOMO_FLOAT:*`), voir
+ * point de vue trésorerie (Δ signé sur `CASH_BOX` ∪ `PSP_FLOAT:*` ∪ anciens `MOMO_FLOAT:*`), voir
  * R-LEDGER-06. Le compte principal affiché est le premier compte de
  * trésorerie touché par la transaction (R-LEDGER-07). La période est bornée
  * à `MAX_PERIOD_DAYS` (R-LEDGER-08).
@@ -26,7 +26,8 @@ class LedgerJournalService
     /** Types de comptes considérés comme "trésorerie" pour le calcul du solde global. */
     private const TREASURY_TYPES = [
         AccountType::CashBox,
-        AccountType::MomoFloat,
+        AccountType::PspFloat,
+        AccountType::MomoFloat, // ancien float réseau (avant DA-20)
     ];
 
     public function __construct(
@@ -172,7 +173,7 @@ class LedgerJournalService
     /** Somme signée Δ (asset : DR-CR) sur les comptes de trésorerie avant `$from`. */
     private function treasuryBalanceBefore(Carbon $from, array $treasuryTypes): int
     {
-        // Pour asset (CASH_BOX + MOMO_FLOAT) : balance = SUM(debit) - SUM(credit).
+        // Pour asset (CASH_BOX + PSP_FLOAT + MOMO_FLOAT) : balance = SUM(debit) - SUM(credit).
         $row = DB::table('ledger_entries as e')
             ->join('ledger_accounts as a', 'a.key', '=', 'e.account_key')
             ->whereIn('a.type', $treasuryTypes)
@@ -295,9 +296,12 @@ class LedgerJournalService
 
     private function expectedAccountKeyForChannel(string $channel): string
     {
-        return $channel === 'cash'
-            ? 'CASH_BOX'
-            : \App\Modules\Ledger\Domain\ValueObjects\TreasuryAccount::key($channel);
+        // Anciennes valeurs réseau (avant DA-20) : filtre sur l'ancien float MOMO_FLOAT:{RÉSEAU}.
+        if (in_array($channel, \App\Modules\Payments\Domain\Enums\PaymentChannel::LEGACY_NETWORK_VALUES, true)) {
+            return 'MOMO_FLOAT:' . strtoupper($channel);
+        }
+
+        return \App\Modules\Ledger\Domain\ValueObjects\TreasuryAccount::key($channel);
     }
 
     /** @return array{0:string,1:string} [operation_type, operation_label] */
@@ -349,6 +353,9 @@ class LedgerJournalService
         } elseif (str_starts_with($d, 'Recette diverse')) {
             $type = 'manual_income';
             $label = $d;
+        } elseif (str_starts_with($d, 'Transfert de trésorerie')) {
+            $type = 'treasury_transfer';
+            $label = 'Transfert de trésorerie';
         }
 
         if ($isReversal) {

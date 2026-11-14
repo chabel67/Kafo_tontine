@@ -185,6 +185,27 @@ trait BuildsKafoFixtures
         return app(LedgerService::class)->balance("MEMBER_SAVINGS:{$membership->id}");
     }
 
+    /**
+     * Configure les agrégateurs (clés factices) et reconstruit le registre (DA-20).
+     * Sans clés, aucun agrégateur n'est disponible pour cotiser.
+     */
+    protected function configurePsps(bool $fedapayEnabled = true): void
+    {
+        config()->set('services.kkiapay', [
+            'public_key' => 'pk_test', 'private_key' => 'prk_test', 'secret' => 'sk_test',
+            'webhook_secret' => 'kkiapay-whsec', 'sandbox' => true, 'networks' => ['mtn', 'moov'],
+        ]);
+        config()->set('services.fedapay', [
+            'public_key' => 'pk_fed', 'secret_key' => 'sk_fed', 'webhook_secret' => 'wh_sandbox_test',
+            'sandbox' => true, 'sandbox_api_url' => 'https://sandbox-api.fedapay.com/v1',
+            'return_url' => 'http://localhost:5174/cotiser', 'networks' => ['mtn', 'moov', 'celtiis'],
+        ]);
+        app()->forgetInstance(\App\Modules\Payments\Infrastructure\Psp\PspRegistry::class);
+
+        \Illuminate\Support\Facades\DB::table('system_settings')->where('key', 'psp_kkiapay_enabled')->update(['value' => 'true']);
+        \Illuminate\Support\Facades\DB::table('system_settings')->where('key', 'psp_fedapay_enabled')->update(['value' => $fedapayEnabled ? 'true' : 'false']);
+    }
+
     /** Jeton step-up valide pour l'utilisateur (même mécanisme que RequireStepUpToken). */
     protected function stepUpHeader(User $user): array
     {

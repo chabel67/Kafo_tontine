@@ -75,6 +75,7 @@ class EarlyWithdrawalService
         User $requester,
         string $via,
         string $idempotencyKey,
+        ?string $payoutNetwork = null,
     ): EarlyWithdrawal {
         // R-PAY-02 appliqué aux retraits : une même clé ne crée jamais deux demandes
         $existing = EarlyWithdrawal::where('idempotency_key', $idempotencyKey)->first();
@@ -85,7 +86,7 @@ class EarlyWithdrawalService
             return $existing;
         }
 
-        $withdrawal = DB::transaction(function () use ($membership, $amountMinor, $reason, $payoutChannel, $payoutPhone, $requester, $via, $idempotencyKey) {
+        $withdrawal = DB::transaction(function () use ($membership, $amountMinor, $reason, $payoutChannel, $payoutPhone, $requester, $via, $idempotencyKey, $payoutNetwork) {
             // Verrous : campagne (partagé, bloque une clôture concurrente) puis adhésion
             // (sérialise les demandes concurrentes sur le même plafond).
             $membership = $this->lockMembershipForOperation($membership->id);
@@ -111,6 +112,7 @@ class EarlyWithdrawalService
                 'reason'          => $reason,
                 'payout_channel'  => $payoutChannel,
                 'payout_phone'    => $payoutChannel === 'cash' ? null : $payoutPhone,
+                'payout_network'  => $payoutChannel === 'cash' ? null : $payoutNetwork,
                 'status'          => Status::Pending,
                 'requested_via'   => $via,
                 'requested_by'    => $requester->id,
@@ -205,10 +207,10 @@ class EarlyWithdrawalService
     }
 
     /**
-     * Lance une tentative de versement (manuel : remise d'espèces ou transfert MoMo, DA-13).
+     * Lance une tentative de versement (manuel : remise d'espèces ou transfert depuis le compte agrégateur, DA-13/DA-20).
      * Aucune écriture comptable tant que le versement n'est pas confirmé.
      */
-    public function initiatePayout(EarlyWithdrawal $withdrawal, string $channel, ?string $phone, string $idempotencyKey, User $actor): Attempt
+    public function initiatePayout(EarlyWithdrawal $withdrawal, string $channel, ?string $phone, string $idempotencyKey, User $actor, ?string $network = null): Attempt
     {
         // Idempotence : rejouer la même requête renvoie la même tentative
         $existing = Attempt::where('idempotency_key', $idempotencyKey)->first();
@@ -219,7 +221,7 @@ class EarlyWithdrawalService
             return $existing;
         }
 
-        $attempt = DB::transaction(function () use ($withdrawal, $channel, $phone, $idempotencyKey, $actor) {
+        $attempt = DB::transaction(function () use ($withdrawal, $channel, $phone, $idempotencyKey, $actor, $network) {
             $membership = $this->lockMembershipForOperation($withdrawal->membership_id);
             $w = EarlyWithdrawal::whereKey($withdrawal->id)->lockForUpdate()->firstOrFail();
             $this->assertCanTransition($w, Status::PayoutProcessing);
@@ -237,6 +239,7 @@ class EarlyWithdrawalService
                 'idempotency_key'     => $idempotencyKey,
                 'channel'             => $channel,
                 'phone'               => $channel === 'cash' ? null : $phone,
+                'network'             => $channel === 'cash' ? null : $network,
                 'status'              => Attempt::PROCESSING,
                 'initiated_by'        => $actor->id,
                 'initiated_at'        => now(),
@@ -307,6 +310,7 @@ class EarlyWithdrawalService
                 'disbursed_at'          => now(),
                 'disbursed_channel'     => $attempt->channel,
                 'disbursed_phone'       => $attempt->phone,
+                'disbursed_network'     => $attempt->network,
                 'ledger_transaction_id' => $txn->id,
             ]);
 

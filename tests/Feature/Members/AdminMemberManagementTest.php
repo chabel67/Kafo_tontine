@@ -308,7 +308,7 @@ class AdminMemberManagementTest extends TestCase
         ]);
         Payment::create([
             'reference' => 'PAY-T-2', 'idempotency_key' => (string) Str::uuid(), 'membership_id' => $membership->id,
-            'channel' => 'mtn', 'status' => 'pending', 'amount_minor' => 5000,
+            'channel' => 'kkiapay', 'status' => 'pending', 'amount_minor' => 5000,
         ]);
 
         $kpis = $this->getJson("/api/admin/members/{$member->id}/overview")->assertOk()->json('data.kpis');

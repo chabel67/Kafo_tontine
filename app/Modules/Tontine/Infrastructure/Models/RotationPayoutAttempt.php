@@ -28,7 +28,7 @@ class RotationPayoutAttempt extends Model
 
     protected $fillable = [
         'kind', 'campaign_id', 'membership_id', 'rotation_round_id', 'rotation_departure_id',
-        'attempt_no', 'idempotency_key', 'amount_minor', 'reason', 'reference', 'channel', 'phone', 'status',
+        'attempt_no', 'idempotency_key', 'amount_minor', 'reason', 'reference', 'channel', 'phone', 'network', 'status',
         'external_reference', 'failure_reason', 'initiated_by', 'initiated_at',
         'completed_by', 'completed_at', 'ledger_transaction_id',
     ];

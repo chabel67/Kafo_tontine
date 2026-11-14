@@ -157,11 +157,12 @@ class AdminRotationController extends Controller
     public function initiatePayout(Request $request, \App\Modules\Tontine\Infrastructure\Models\RotationRound $round): JsonResponse
     {
         $data = $request->validate([
-            'channel'         => ['required', 'in:cash,mtn,moov,orange,wave'],
+            'channel'         => ['required', \Illuminate\Validation\Rule::in(\App\Modules\Payments\Domain\Enums\PaymentChannel::values())],
+            'network'         => ['required_unless:channel,cash', 'nullable', \Illuminate\Validation\Rule::in(\App\Modules\Payments\Domain\Enums\MobileNetwork::values())],
             'phone'           => ['required_unless:channel,cash', 'nullable', 'string', 'regex:/^\+\d{7,15}$/'],
             'idempotency_key' => ['required', 'string', 'min:8', 'max:100'],
         ]);
-        $attempt = $this->payouts()->initiate($round, $data['channel'], $data['phone'] ?? null, $data['idempotency_key'], $request->user());
+        $attempt = $this->payouts()->initiate($round, $data['channel'], $data['phone'] ?? null, $data['idempotency_key'], $request->user(), $data['network'] ?? null);
 
         $this->audit->logFromRequest($request, 'rotation.round.payout_initiate', 'rotation_round', $round->id, [],
             ['attempt_id' => $attempt->id, 'attempt_no' => $attempt->attempt_no, 'channel' => $attempt->channel, 'amount_minor' => $attempt->amount_minor]);

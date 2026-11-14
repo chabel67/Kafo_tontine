@@ -165,7 +165,7 @@ class AdminLedgerController extends Controller
         $data = $request->validate([
             'direction'    => ['required', 'string', Rule::in(['in', 'out'])],
             'amount_minor' => ['required', 'integer', 'min:1'],
-            'channel'      => ['required', 'string', Rule::in(['cash', 'mtn', 'orange', 'moov', 'wave'])],
+            'channel'      => ['required', 'string', Rule::in(\App\Modules\Payments\Domain\Enums\PaymentChannel::values())],
             'category'     => ['required', 'string', Rule::in(array_map(fn ($c) => $c->value, ManualEntryCategory::cases()))],
             'notes'        => ['nullable', 'string', 'max:500'],
         ]);
@@ -213,7 +213,7 @@ class AdminLedgerController extends Controller
             'from'           => ['nullable', 'date'],
             'to'             => ['nullable', 'date', 'after_or_equal:from'],
             'search'         => ['nullable', 'string', 'max:100'],
-            'channel'        => ['nullable', 'string', 'in:cash,mtn,orange,moov,wave'],
+            'channel'        => ['nullable', 'string', Rule::in([...\App\Modules\Payments\Domain\Enums\PaymentChannel::values(), ...\App\Modules\Payments\Domain\Enums\PaymentChannel::LEGACY_NETWORK_VALUES])],
             'operation_type' => ['nullable', 'string', 'max:40'],
             'page'           => ['nullable', 'integer', 'min:1'],
             'per_page'       => ['nullable', 'integer', 'min:1', 'max:100'],
