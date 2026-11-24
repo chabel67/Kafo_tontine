@@ -3,7 +3,9 @@
 namespace App\Modules\Lending\Http\Controllers;
 
 use App\Modules\Lending\Application\EligibilityService;
+use App\Modules\Audit\Application\AuditService;
 use App\Modules\Lending\Application\LendingService;
+use App\Modules\Lending\Application\LoanAttestationService;
 use App\Modules\Lending\Domain\Enums\LoanProductType;
 use App\Modules\Lending\Domain\Enums\LoanRequestStatus;
 use App\Modules\Lending\Http\Resources\LoanRepaymentScheduleResource;
@@ -14,6 +16,7 @@ use App\Modules\Tontine\Infrastructure\Models\Membership;
 use App\Shared\ApiResponse;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Http\Response;
 use Illuminate\Routing\Controller;
 
 class MemberLoanController extends Controller
@@ -81,6 +84,21 @@ class MemberLoanController extends Controller
         );
     }
 
+    /** GET /member/loans/{loan}/attestation — PDF d'octroi de SES prêts uniquement (404 sinon). */
+    public function attestation(Request $request, string $loanId, LoanAttestationService $attestations, AuditService $audit): Response|JsonResponse
+    {
+        $loan = Loan::where('id', $loanId)
+            ->where('user_id', $request->user()->id)
+            ->firstOrFail();
+
+        if (! LoanAttestationService::isAvailable($loan)) {
+            return ApiResponse::error('attestation_unavailable', "L'attestation est disponible une fois le prêt versé.", 422);
+        }
+        $audit->logFromRequest($request, 'loan.attestation.download', 'loan', $loan->id, [], ['reference' => $loan->reference]);
+
+        return $attestations->download($loan);
+    }
+
     public function myLoans(Request $request): JsonResponse
     {
         // R-LOAN-16 : avances ET prêts communautaires (sans adhésion) de l'emprunteur.
@@ -101,6 +119,7 @@ class MemberLoanController extends Controller
                 'disbursed_at'      => $loan->disbursed_at?->toDateString(),
                 'disbursed_channel' => $loan->disbursed_channel,
                 'disbursed_network' => $loan->disbursed_network,
+                'attestation_available' => LoanAttestationService::isAvailable($loan),
                 'campaign_name'     => $loan->membership?->campaign?->name ?? 'Prêt communautaire',
                 'repayments'        => $loan->repayments
                     ->sortByDesc('created_at')

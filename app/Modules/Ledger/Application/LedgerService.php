@@ -25,6 +25,28 @@ class LedgerService
         );
     }
 
+    /** Référence `TXN-…` d'une transaction (documents, R-DOC-01). */
+    public function transactionReference(?string $transactionId): ?string
+    {
+        return $transactionId ? LedgerTransaction::whereKey($transactionId)->value('reference') : null;
+    }
+
+    /**
+     * Référence de la première transaction (non contre-passée) dont `metadata[$key] = $value`
+     * et qui ne porte aucune des clés `$withoutKeys`. Ex. décaissement d'un prêt : `loan_id`
+     * sans `repayment_id` (le prêt ne stocke pas l'identifiant de sa transaction).
+     */
+    public function firstReferenceByMetadata(string $key, string $value, array $withoutKeys = []): ?string
+    {
+        $query = LedgerTransaction::whereRaw('metadata ->> ? = ?', [$key, $value])
+            ->whereNull('reverses_id');
+        foreach ($withoutKeys as $without) {
+            $query->whereRaw('NOT (metadata ?? ?)', [$without]);
+        }
+
+        return $query->orderBy('created_at')->value('reference');
+    }
+
     /**
      * Posts a balanced double-entry transaction.
      *

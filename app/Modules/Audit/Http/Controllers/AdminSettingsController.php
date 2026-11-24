@@ -38,12 +38,25 @@ class AdminSettingsController extends Controller
         $data = $request->validate([
             'settings'         => ['required', 'array', 'min:1'],
             'settings.*.key'   => ['required', 'string', 'distinct', 'exists:system_settings,key'],
-            'settings.*.value' => ['required'],
+            // `present` : un champ texte (adresse, mentions…) peut être vidé ; seuls les
+            // paramètres de type `string` acceptent une valeur vide (contrôle ci-dessous).
+            'settings.*.value' => ['present'],
         ]);
 
         $current = DB::table('system_settings')
             ->whereIn('key', array_column($data['settings'], 'key'))
             ->pluck('value', 'key');
+
+        $types = DB::table('system_settings')
+            ->whereIn('key', array_column($data['settings'], 'key'))
+            ->pluck('type', 'key');
+        foreach ($data['settings'] as $i => $item) {
+            if (($item['value'] === null || $item['value'] === '') && ($types[$item['key']] ?? null) !== 'string') {
+                return ApiResponse::error('validation_error', 'Ce paramètre ne peut pas être vide.', 422, [
+                    'details' => ["settings.{$i}.value" => ['Ce paramètre ne peut pas être vide.']],
+                ]);
+            }
+        }
 
         // Contrôle avant toute écriture : la requête est acceptée ou refusée en bloc.
         // DA-20 : un agrégateur sans clés configurées ne peut pas être activé.

@@ -5,6 +5,7 @@ namespace App\Modules\Lending\Http\Controllers;
 use App\Modules\Audit\Application\AuditService;
 use App\Modules\Lending\Application\EligibilityService;
 use App\Modules\Lending\Application\LendingService;
+use App\Modules\Lending\Application\LoanAttestationService;
 use App\Modules\Lending\Domain\Enums\LoanProductType;
 use App\Modules\Lending\Domain\Enums\LoanRequestStatus;
 use App\Modules\Lending\Http\Requests\CreateLoanRequestRequest;
@@ -18,6 +19,7 @@ use App\Modules\Tontine\Infrastructure\Models\Membership;
 use App\Shared\ApiResponse;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Http\Response;
 use Illuminate\Routing\Controller;
 
 class AdminLoanController extends Controller
@@ -231,6 +233,17 @@ class AdminLoanController extends Controller
     {
         $loan->load(['membership.user', 'membership.campaign', 'campaign', 'repayments', 'loanRequest', 'schedules']);
         return ApiResponse::success(new LoanResource($loan));
+    }
+
+    /** GET /admin/loans/{loan}/attestation — PDF d'octroi (R-DOC-01), audité. */
+    public function attestation(Request $request, Loan $loan, LoanAttestationService $attestations): Response|JsonResponse
+    {
+        if (! LoanAttestationService::isAvailable($loan)) {
+            return ApiResponse::error('attestation_unavailable', "L'attestation est disponible une fois le prêt décaissé.", 422);
+        }
+        $this->audit->logFromRequest($request, 'loan.attestation.download', 'loan', $loan->id, [], ['reference' => $loan->reference]);
+
+        return $attestations->download($loan);
     }
 
     public function schedule(Loan $loan): JsonResponse

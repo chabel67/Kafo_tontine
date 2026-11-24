@@ -196,6 +196,8 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/counts', [AdminEarlyWithdrawalController::class, 'counts'])->middleware('permission:withdrawal.view');
         Route::post('/',      [AdminEarlyWithdrawalController::class, 'store'])->middleware('permission:withdrawal.request');
         Route::get('/{withdrawal}', [AdminEarlyWithdrawalController::class, 'show'])->middleware('permission:withdrawal.view');
+        // Attestation de versement PDF (R-DOC-01)
+        Route::get('/{withdrawal}/attestation', [AdminEarlyWithdrawalController::class, 'attestation'])->middleware('permission:withdrawal.view');
 
         // Instruction
         Route::middleware('permission:withdrawal.review')->group(function () {

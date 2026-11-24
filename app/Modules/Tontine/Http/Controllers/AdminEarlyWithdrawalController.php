@@ -8,6 +8,7 @@ use App\Modules\Ledger\Application\LedgerService;
 use App\Modules\Lending\Infrastructure\Models\Loan;
 use App\Modules\Payments\Infrastructure\Models\Payment;
 use App\Modules\Tontine\Application\EarlyWithdrawalService;
+use App\Modules\Tontine\Application\WithdrawalAttestationService;
 use App\Modules\Tontine\Domain\Enums\EarlyWithdrawalStatus;
 use App\Modules\Tontine\Http\Requests\ConfirmWithdrawalPayoutRequest;
 use App\Modules\Tontine\Http\Requests\CreateEarlyWithdrawalRequest;
@@ -20,6 +21,7 @@ use App\Modules\Tontine\Infrastructure\Models\Membership;
 use App\Shared\ApiResponse;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Http\Response;
 use Illuminate\Routing\Controller;
 
 /**
@@ -293,6 +295,17 @@ class AdminEarlyWithdrawalController extends Controller
         $this->log($request, 'payout_fail', $w, ['status' => 'payout_processing'], ['status' => 'payout_failed', 'reason' => $request->validated('reason')]);
 
         return $this->respond($w);
+    }
+
+    /** GET /admin/early-withdrawals/{withdrawal}/attestation — PDF de versement (R-DOC-01), audité. */
+    public function attestation(Request $request, EarlyWithdrawal $withdrawal, WithdrawalAttestationService $attestations): Response|JsonResponse
+    {
+        if (! WithdrawalAttestationService::isAvailable($withdrawal)) {
+            return ApiResponse::error('attestation_unavailable', "L'attestation est disponible une fois le versement confirmé.", 422);
+        }
+        $this->log($request, 'attestation.download', $withdrawal, [], ['reference' => $withdrawal->reference]);
+
+        return $attestations->download($withdrawal);
     }
 
     private function respond(EarlyWithdrawal $w): JsonResponse

@@ -38,6 +38,8 @@ class LoanResource extends JsonResource
             'disbursed_phone'      => $this->disbursed_phone,
             'disbursed_network'    => $this->disbursed_network,
             'disbursed_at'         => $this->disbursed_at?->toIso8601String(),
+            // R-DOC-01 : attestation d'octroi téléchargeable (GET …/loans/{id}/attestation).
+            'attestation_available' => \App\Modules\Lending\Application\LoanAttestationService::isAvailable($this->resource),
             'written_off_at'       => $this->written_off_at?->toIso8601String(),
             'written_off_reason'   => $this->written_off_reason,
             'created_at'           => $this->created_at?->toIso8601String(),

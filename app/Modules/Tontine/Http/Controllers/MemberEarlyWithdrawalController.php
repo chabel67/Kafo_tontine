@@ -5,6 +5,7 @@ namespace App\Modules\Tontine\Http\Controllers;
 use App\Modules\Audit\Application\AuditService;
 use App\Modules\Notifications\Application\NotificationService;
 use App\Modules\Tontine\Application\EarlyWithdrawalService;
+use App\Modules\Tontine\Application\WithdrawalAttestationService;
 use App\Modules\Tontine\Http\Requests\CreateEarlyWithdrawalRequest;
 use App\Modules\Tontine\Http\Requests\RespondEarlyWithdrawalRequest;
 use App\Modules\Tontine\Http\Resources\EarlyWithdrawalResource;
@@ -13,6 +14,7 @@ use App\Modules\Tontine\Infrastructure\Models\Membership;
 use App\Shared\ApiResponse;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Http\Response;
 use Illuminate\Routing\Controller;
 
 /**
@@ -104,6 +106,19 @@ class MemberEarlyWithdrawalController extends Controller
             ['status' => 'info_requested'], ['status' => $updated->status->value]);
 
         return ApiResponse::success(new EarlyWithdrawalResource($updated->load('membership.campaign')));
+    }
+
+    /** GET /member/early-withdrawals/{withdrawal}/attestation — PDF de SES retraits versés (404 sinon). */
+    public function attestation(Request $request, EarlyWithdrawal $withdrawal, WithdrawalAttestationService $attestations): Response|JsonResponse
+    {
+        $this->assertOwner($request, $withdrawal->user_id);
+
+        if (! WithdrawalAttestationService::isAvailable($withdrawal)) {
+            return ApiResponse::error('attestation_unavailable', "L'attestation est disponible une fois le versement confirmé.", 422);
+        }
+        $this->audit->logFromRequest($request, 'early_withdrawal.attestation.download', 'early_withdrawal', $withdrawal->id, [], ['reference' => $withdrawal->reference]);
+
+        return $attestations->download($withdrawal);
     }
 
     private function assertOwner(Request $request, string $ownerId): void

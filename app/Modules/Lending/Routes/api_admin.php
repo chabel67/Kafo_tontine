@@ -39,6 +39,9 @@ Route::middleware('auth:sanctum')->group(function () {
             ->middleware('permission:loan.view');
         Route::get('/{loan}/schedule',     [AdminLoanController::class, 'schedule'])
             ->middleware('permission:loan.view');
+        // Attestation d'octroi PDF (R-DOC-01)
+        Route::get('/{loan}/attestation',  [AdminLoanController::class, 'attestation'])
+            ->middleware('permission:loan.view');
         Route::post('/{loan}/schedule/{item}/waive', [AdminLoanController::class, 'waiveScheduleItem'])
             ->middleware(['permission:loan.review', 'step_up']);
         Route::post('/{loan}/repay',       [AdminLoanController::class, 'recordRepayment'])

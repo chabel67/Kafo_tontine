@@ -34,6 +34,8 @@ class EarlyWithdrawalResource extends JsonResource
             'reviewed_at'          => $this->reviewed_at?->toIso8601String(),
             'decided_at'           => $this->decided_at?->toIso8601String(),
             'disbursed_at'         => $this->disbursed_at?->toIso8601String(),
+            // R-DOC-01 : attestation de versement téléchargeable (GET …/early-withdrawals/{id}/attestation).
+            'attestation_available' => \App\Modules\Tontine\Application\WithdrawalAttestationService::isAvailable($this->resource),
             'cancelled_at'         => $this->cancelled_at?->toIso8601String(),
             'member'               => $this->whenLoaded('user', fn () => [
                 'id'        => $this->user->id,

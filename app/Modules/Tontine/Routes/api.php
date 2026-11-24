@@ -21,5 +21,6 @@ Route::middleware('auth:sanctum')->prefix('member')->group(function () {
     Route::post('early-withdrawals',                      [MemberEarlyWithdrawalController::class, 'store']);
     Route::post('early-withdrawals/{withdrawal}/cancel',  [MemberEarlyWithdrawalController::class, 'cancel']);
     Route::post('early-withdrawals/{withdrawal}/respond', [MemberEarlyWithdrawalController::class, 'respond']);
+    Route::get('early-withdrawals/{withdrawal}/attestation', [MemberEarlyWithdrawalController::class, 'attestation']);
     Route::get('memberships/{membership}/withdrawable',   [MemberEarlyWithdrawalController::class, 'withdrawable']);
 });
